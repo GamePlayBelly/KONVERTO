@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: konverto
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: node server.mjs
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_GEMINI_API_KEY
+        sync: false
