@@ -64,37 +64,34 @@ export async function insertTrip(
     .single()
   if (error) throw error
 
-  // Aggiorna eco_score e total_co2_saved nel profilo
-  const ecoPoints   = Number(trip.eco_points)   || 0
-  const co2Saved    = Number(trip.co2_saved_kg) || 0
-  if (ecoPoints > 0 || co2Saved > 0) {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('eco_score, total_co2_saved')
-      .eq('id', trip.user_id)
-      .single()
-    await supabase.from('profiles').update({
-      eco_score:       (Number(prof?.eco_score)       || 0) + ecoPoints,
-      total_co2_saved: (Number(prof?.total_co2_saved) || 0) + co2Saved,
-    }).eq('id', trip.user_id)
-  }
+  // NOTE: profile stats are NOT updated here — incrementProfileStats() credits
+  // points/CO₂ exactly once. (insertTrip used to add them too → double counting.)
 
   return data as Trip
 }
 
 export async function deleteTrip(tripId: string): Promise<void> {
-  // Prima leggi il viaggio per sapere quanti punti/co2 togliere dal profilo
-  const { data: trip } = await supabase
+  // Prima leggi il viaggio per sapere quanti punti/co2 togliere dal profilo.
+  // Fallback senza is_scheduled se la patch SQL non è ancora stata applicata.
+  let { data: trip } = await supabase
     .from('trips')
-    .select('user_id, eco_points, co2_saved_kg')
+    .select('user_id, eco_points, co2_saved_kg, is_scheduled')
     .eq('id', tripId)
     .single()
+  if (!trip) {
+    const { data: legacy } = await supabase
+      .from('trips')
+      .select('user_id, eco_points, co2_saved_kg')
+      .eq('id', tripId)
+      .single()
+    trip = legacy ? { ...legacy, is_scheduled: false } : null
+  }
 
   const { error } = await supabase.from('trips').delete().eq('id', tripId)
   if (error) throw error
 
-  // Decrementa eco_score e total_co2_saved nel profilo
-  if (trip) {
+  // Decrementa eco_score e total_co2_saved nel profilo (solo se già accreditati)
+  if (trip && !trip.is_scheduled) {
     const ecoPoints = Number(trip.eco_points)   || 0
     const co2Saved  = Number(trip.co2_saved_kg) || 0
     if (ecoPoints > 0 || co2Saved > 0) {
@@ -115,8 +112,74 @@ export async function updateTrip(
   tripId: string,
   updates: Partial<Pick<Trip, 'transport_mode' | 'distance_km' | 'co2_saved_kg' | 'eco_points' | 'duration_minutes' | 'notes' | 'recorded_at'>>
 ): Promise<void> {
+  // Read the old row first so the profile stats can be adjusted by the delta.
+  // Fallback without is_scheduled if the patch SQL has not been applied yet.
+  let { data: old } = await supabase
+    .from('trips')
+    .select('user_id, eco_points, co2_saved_kg, is_scheduled')
+    .eq('id', tripId)
+    .single()
+  if (!old) {
+    const { data: legacy } = await supabase
+      .from('trips')
+      .select('user_id, eco_points, co2_saved_kg')
+      .eq('id', tripId)
+      .single()
+    old = legacy ? { ...legacy, is_scheduled: false } : null
+  }
+
   const { error } = await supabase.from('trips').update(updates).eq('id', tripId)
   if (error) throw error
+
+  // Scheduled trips have not been credited yet → nothing to adjust
+  if (!old || old.is_scheduled) return
+
+  const oldPts = Number(old.eco_points)   || 0
+  const oldCo2 = Number(old.co2_saved_kg) || 0
+  const newPts = updates.eco_points    !== undefined ? Number(updates.eco_points) || 0    : oldPts
+  const newCo2 = updates.co2_saved_kg  !== undefined ? Number(updates.co2_saved_kg) || 0  : oldCo2
+  const dPts = newPts - oldPts
+  const dCo2 = newCo2 - oldCo2
+  if (dPts === 0 && dCo2 === 0) return
+
+  const { data: prof } = await supabase
+    .from('profiles')
+    .select('eco_score, total_co2_saved')
+    .eq('id', old.user_id)
+    .single()
+  if (!prof) return
+
+  await supabase.from('profiles').update({
+    eco_score:       Math.max(0, (Number(prof.eco_score)       || 0) + dPts),
+    total_co2_saved: Math.max(0, (Number(prof.total_co2_saved) || 0) + dCo2),
+    updated_at:      new Date().toISOString(),
+  }).eq('id', old.user_id)
+}
+
+/** Credits points/CO₂ for scheduled trips whose date has passed.
+ *  Safe to call repeatedly: the trip is flagged before crediting. */
+export async function processScheduledTrips(userId: string): Promise<void> {
+  const now = new Date().toISOString()
+  const { data: due, error } = await supabase
+    .from('trips')
+    .select('id, eco_points, co2_saved_kg')
+    .eq('user_id', userId)
+    .eq('is_scheduled', true)
+    .lte('recorded_at', now)
+  // Column missing (patch not applied yet) → nothing to do
+  if (error) return
+
+  for (const t of due ?? []) {
+    // Flag first (guarded by is_scheduled=true) to avoid double-crediting
+    const { data: marked, error: markErr } = await supabase
+      .from('trips')
+      .update({ is_scheduled: false })
+      .eq('id', t.id)
+      .eq('is_scheduled', true)
+      .select('id')
+    if (markErr || !marked?.length) continue
+    await incrementProfileStats(userId, Number(t.eco_points) || 0, Number(t.co2_saved_kg) || 0)
+  }
 }
 
 export async function getUserBadges(userId: string): Promise<UserBadge[]> {
@@ -368,32 +431,70 @@ export async function redeemClubPrize(
   clubId: string,
   pointsCost: number
 ): Promise<void> {
-  // Check stock
-  const { data: prize } = await supabase
+  // 1. Validate the prize and prevent double redemption
+  const { data: prize, error: prizeErr } = await supabase
     .from('club_prizes')
-    .select('stock')
+    .select('stock, is_active')
     .eq('id', prizeId)
     .single()
-  if (prize && prize.stock !== null && (prize.stock as number) <= 0) throw new Error('Premio esaurito')
+  if (prizeErr || !prize) throw new Error('Premio non trovato')
+  if (prize.is_active === false) throw new Error('Premio non più disponibile')
+  if (prize.stock !== null && (prize.stock as number) <= 0) throw new Error('Premio esaurito')
 
-  // Insert redemption record
+  const { data: existing } = await supabase
+    .from('club_prize_redemptions')
+    .select('id')
+    .eq('prize_id', prizeId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (existing) throw new Error('Premio già riscattato')
+
+  // 2. Check points BEFORE writing anything
+  const p = await getProfile(userId)
+  if (!p) throw new Error('Profilo non trovato')
+  const currentPoints = p.eco_score ?? 0
+  if (currentPoints < pointsCost) throw new Error('Punti insufficienti')
+
+  // 3. Reserve stock first (conditional update) so two tabs can't oversell
+  let stockReserved = false
+  if (prize.stock !== null) {
+    const { data: stockRows, error: stockErr } = await supabase
+      .from('club_prizes')
+      .update({ stock: Math.max(0, (prize.stock as number) - 1) })
+      .eq('id', prizeId)
+      .gt('stock', 0)
+      .select('id')
+    if (stockErr) throw stockErr
+    if (!stockRows?.length) throw new Error('Premio esaurito')
+    stockReserved = true
+  }
+
+  // 4. Deduct points; roll back the stock reserve if it fails
+  const { error: deductErr } = await supabase
+    .from('profiles')
+    .update({ eco_score: Math.max(0, currentPoints - pointsCost) })
+    .eq('id', userId)
+  if (deductErr) {
+    if (stockReserved) {
+      await supabase.from('club_prizes')
+        .update({ stock: (prize.stock as number) })
+        .eq('id', prizeId)
+    }
+    throw deductErr
+  }
+
+  // 5. Record the redemption; refund points+stock if the insert fails
   const { error: rErr } = await supabase
     .from('club_prize_redemptions')
     .insert({ prize_id: prizeId, user_id: userId, club_id: clubId, status: 'confirmed' })
-  if (rErr) throw rErr
-
-  // Deduct points from profile
-  const p = await getProfile(userId)
-  if (!p) throw new Error('Profilo non trovato')
-  if ((p.eco_score ?? 0) < pointsCost) throw new Error('Punti insufficienti')
-  await supabase.from('profiles').update({ eco_score: (p.eco_score ?? 0) - pointsCost }).eq('id', userId)
-
-  // Decrement stock if finite
-  if (prize && prize.stock !== null) {
-    await supabase
-      .from('club_prizes')
-      .update({ stock: (prize.stock as number) - 1 })
-      .eq('id', prizeId)
+  if (rErr) {
+    await supabase.from('profiles').update({ eco_score: currentPoints }).eq('id', userId)
+    if (stockReserved) {
+      await supabase.from('club_prizes')
+        .update({ stock: (prize.stock as number) })
+        .eq('id', prizeId)
+    }
+    throw rErr
   }
 }
 
@@ -426,49 +527,14 @@ export async function updateClubMemberRole(clubId: string, userId: string, role:
 // ── Leaderboard period bonus awards ──────────────────────────────────────────
 
 /** Award bonus eco_points to the top 10 users of a completed 30-day period.
- *  Called client-side when the period rolls over (localStorage guard prevents double-award).
- */
+ *  Runs server-side via SECURITY DEFINER RPC (RLS would block updating other
+ *  profiles from the client) and is idempotent: each period is awarded once,
+ *  tracked in the leaderboard_bonus_awards table. */
 export async function awardPeriodBonuses(periodStart: string, periodEnd: string): Promise<void> {
-  // Fetch all trips in the period
-  const { data: trips } = await supabase
-    .from('trips')
-    .select('user_id, eco_points')
-    .gte('recorded_at', periodStart)
-    .lt('recorded_at', periodEnd)
-  if (!trips?.length) return
-
-  // Aggregate points per user
-  const byUser: Record<string, number> = {}
-  for (const t of trips) {
-    byUser[t.user_id as string] = (byUser[t.user_id as string] ?? 0) + (t.eco_points as number ?? 0)
-  }
-
-  // Sort descending and take top 10
-  const BONUS_TABLE = [500, 250, 100, 50, 50, 50, 50, 50, 50, 50]
-  const ranked = Object.entries(byUser)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 10)
-
-  if (!ranked.length) return
-
-  // Fetch current eco_score for each winner
-  const winnerIds = ranked.map(([uid]) => uid)
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('id, eco_score')
-    .in('id', winnerIds)
-  if (!profiles?.length) return
-
-  // Apply bonuses
-  const updates = ranked.map(([uid], i) => {
-    const p = profiles.find(x => x.id === uid)
-    if (!p) return null
-    return supabase.from('profiles')
-      .update({ eco_score: ((p.eco_score as number) ?? 0) + BONUS_TABLE[i] })
-      .eq('id', uid)
-  }).filter(Boolean)
-
-  await Promise.all(updates as unknown as Promise<unknown>[])
+  await supabase.rpc('award_period_bonuses', {
+    p_period_start: periodStart,
+    p_period_end: periodEnd,
+  })
 }
 
 // ── Challenge helpers ─────────────────────────────────────────────────────────
@@ -1062,71 +1128,16 @@ export async function incrementProfileStats(
 
 /** Called on the Carpooling page load. Finds rides whose departure_time has
  *  passed, marks them 'completed', awards eco points + inserts trip records
- *  for the driver and every passenger. */
+ *  for the driver AND every passenger.
+ *  Runs server-side (SECURITY DEFINER RPC): RLS only lets the driver update
+ *  their own ride/profile, so the previous client-side loop silently failed
+ *  to reward passengers and could double-award on concurrent loads. */
 export async function processExpiredCarpoolRides(): Promise<void> {
-  const now = new Date().toISOString()
-
-  const { data: expired } = await supabase
-    .from('carpooling_rides')
-    .select('id, driver_id, distance_km, booked_seats')
-    .eq('status', 'active')
-    .lt('departure_time', now)
-
-  if (!expired?.length) return
-
-  for (const ride of expired) {
-    // Mark completed first → prevents double-processing on concurrent loads
-    const { error: completeErr } = await supabase
-      .from('carpooling_rides')
-      .update({ status: 'completed' })
-      .eq('id', ride.id)
-    if (completeErr) continue
-
-    const distKm    = Number(ride.distance_km) || 15
-    const co2PerSeat = distKm * 0.05  // ~50 g/km saved vs solo car
-
-    const { data: bookings } = await supabase
-      .from('carpooling_bookings')
-      .select('passenger_id')
-      .eq('ride_id', ride.id)
-
-    const passCount = bookings?.length ?? 0
-    const driverPts = Math.round(distKm * 2 + passCount * 10 + 20)
-    const passPts   = Math.round(distKm * 1.5 + 15)
-
-    // ── Award driver ──
-    const { data: driverP } = await supabase
-      .from('profiles').select('eco_score, total_co2_saved').eq('id', ride.driver_id).single()
-    if (driverP) {
-      const driverCo2 = co2PerSeat * (passCount + 1)
-      await supabase.from('profiles').update({
-        eco_score:       (driverP.eco_score as number ?? 0) + driverPts,
-        total_co2_saved: Number(driverP.total_co2_saved ?? 0) + driverCo2,
-      }).eq('id', ride.driver_id)
-      await supabase.from('trips').insert({
-        user_id: ride.driver_id, transport_mode: 'carpooling',
-        distance_km: distKm, co2_saved_kg: driverCo2, eco_points: driverPts,
-        notes: `Carpool completato — ${passCount} passeggero${passCount !== 1 ? 'i' : ''}`,
-        recorded_at: now,
-      })
-    }
-
-    // ── Award passengers ──
-    for (const b of (bookings ?? [])) {
-      const { data: passP } = await supabase
-        .from('profiles').select('eco_score, total_co2_saved').eq('id', b.passenger_id).single()
-      if (passP) {
-        await supabase.from('profiles').update({
-          eco_score:       (passP.eco_score as number ?? 0) + passPts,
-          total_co2_saved: Number(passP.total_co2_saved ?? 0) + co2PerSeat,
-        }).eq('id', b.passenger_id)
-        await supabase.from('trips').insert({
-          user_id: b.passenger_id, transport_mode: 'carpooling',
-          distance_km: distKm, co2_saved_kg: co2PerSeat, eco_points: passPts,
-          notes: 'Carpool completato (passeggero)',
-          recorded_at: now,
-        })
-      }
+  const { error } = await supabase.rpc('process_expired_carpool_rides')
+  if (error) {
+    // Function not deployed yet (patch SQL not applied) → skip silently
+    if (error.code !== 'PGRST202' && error.code !== '42883') {
+      console.warn('[carpool] process_expired_carpool_rides failed:', error.message)
     }
   }
 }

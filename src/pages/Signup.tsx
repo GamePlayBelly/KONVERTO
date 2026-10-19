@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Leaf, User, Mail, Lock, UserCheck, AlertTriangle } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -59,7 +60,20 @@ export default function Signup() {
     if (Object.keys(errs).length) { setErrors(errs); return }
     setLoading(true)
     try {
-      const { needsConfirmation } = await signUp(form.email, form.password, form.username.toLowerCase(), form.fullName)
+      // Pre-check username availability: the DB trigger would otherwise
+      // silently skip profile creation on a UNIQUE violation.
+      const uname = form.username.toLowerCase()
+      const { data: taken } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('username', uname)
+        .maybeSingle()
+      if (taken) {
+        setErrors({ username: 'Username già in uso. Scegline un altro.' })
+        return
+      }
+
+      const { needsConfirmation } = await signUp(form.email, form.password, uname, form.fullName)
       if (needsConfirmation) {
         // Store email so VerifyEmail page can pre-fill it
         sessionStorage.setItem('verifyEmail', form.email)
@@ -92,6 +106,8 @@ export default function Signup() {
         // Account exists but might be unconfirmed — offer to go verify rather than just "try login"
         sessionStorage.setItem('verifyEmail', form.email)
         setApiError('__already_registered__')
+      } else if (lower.includes('duplicate') || lower.includes('unique') || lower.includes('23505')) {
+        setApiError('Username già in uso. Scegline un altro.')
       } else if (lower.includes('invalid email') || lower.includes('unable to validate')) {
         setApiError('Indirizzo email non valido.')
       } else if (lower.includes('password') && lower.includes('short')) {

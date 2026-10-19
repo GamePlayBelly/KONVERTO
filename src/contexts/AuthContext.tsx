@@ -61,6 +61,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: {
         data: { username, full_name: fullName },
+        // Send the confirmation link back to THIS deployment, not the
+        // (possibly localhost) Site URL configured in Supabase
+        emailRedirectTo: `${window.location.origin}/dashboard`,
       },
     })
     if (error) throw error
@@ -88,7 +91,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const resendOtp = async (email: string) => {
     // signInWithOtp sends a proper 6-digit numeric code — more reliable than resend({ type: 'signup' })
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+        emailRedirectTo: `${window.location.origin}/dashboard`,
+      },
+    })
     if (error) throw error
   }
 

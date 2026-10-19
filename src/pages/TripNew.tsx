@@ -313,7 +313,9 @@ export default function TripNew() {
         finalNotes = finalNotes ? `${finalNotes}\n${multiMezzoTag}` : multiMezzoTag
       }
 
-      await insertTrip({
+      // Scheduled trips are only credited when their date arrives
+      // (processScheduledTrips), so points/CO₂ are not added now.
+      const payload: Parameters<typeof insertTrip>[0] = {
         user_id: user.id,
         transport_mode: mode,
         distance_km: finalKm,
@@ -324,7 +326,10 @@ export default function TripNew() {
         end_location: endLoc,
         notes: finalNotes,
         recorded_at: recordedAt,
-      })
+      }
+      if (isScheduled) payload.is_scheduled = true
+
+      await insertTrip(payload)
       if (!isScheduled) {
         await incrementProfileStats(user.id, pts, co2)
         await refreshProfile()

@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-const OTP_LENGTH = 8
+// Supabase email OTP length (Auth → Providers → Email, default 6)
+const OTP_LENGTH = 6
 
 export default function VerifyEmail() {
   const navigate = useNavigate()
@@ -23,7 +24,7 @@ export default function VerifyEmail() {
   const [success, setSuccess] = useState(false)
   const [countdown, setCountdown] = useState(0) // starts at 0 so user can immediately request a code
   const [codeSent, setCodeSent] = useState(false)
-  const [otpExpiry, setOtpExpiry] = useState(0) // countdown for OTP validity (60s)
+  const [otpExpiry, setOtpExpiry] = useState(0) // countdown for OTP validity (Supabase default: 1 hour)
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
 
   // Countdown for resend button
@@ -98,7 +99,7 @@ export default function VerifyEmail() {
       await resendOtp(email)
       setCountdown(30)
       setCodeSent(true)
-      setOtpExpiry(60) // OTP valid for 60 seconds
+      setOtpExpiry(3600) // Supabase OTP default validity: 1 hour
       setError('')
       setOtp(Array(OTP_LENGTH).fill(''))
       setTimeout(() => inputRefs.current[0]?.focus(), 50)
@@ -138,7 +139,7 @@ export default function VerifyEmail() {
             </div>
           </Link>
           <h1 className="text-2xl font-bold text-gray-900">Verifica la tua email</h1>
-          <p className="text-gray-500 mt-1">Inserisci il codice a 8 cifre ricevuto</p>
+          <p className="text-gray-500 mt-1">Inserisci il codice a {OTP_LENGTH} cifre ricevuto</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
@@ -156,7 +157,7 @@ export default function VerifyEmail() {
                 <Mail className="w-7 h-7 text-blue-500" />
               </div>
               <p className="text-sm text-gray-600 text-center">
-                Inserisci l'indirizzo email con cui ti sei registrato per ricevere o verificare il codice a 8 cifre.
+                Inserisci l'indirizzo email con cui ti sei registrato per ricevere o verificare il codice a {OTP_LENGTH} cifre.
               </p>
               <div className="space-y-1.5">
                 <Label htmlFor="verify-email">La tua email</Label>
@@ -207,7 +208,7 @@ export default function VerifyEmail() {
                 </div>
               ) : (
                 <div className={`rounded-xl p-3 mb-4 text-xs text-left border transition-colors ${
-                  otpExpiry > 10
+                  otpExpiry > 600
                     ? 'bg-eco-green-light border-eco-green/20 text-eco-teal'
                     : otpExpiry > 0
                       ? 'bg-amber-50 border-amber-200 text-amber-800'
@@ -215,9 +216,9 @@ export default function VerifyEmail() {
                 }`}>
                   {otpExpiry > 0 ? (
                     <>
-                      ✅ <strong>Codice inviato!</strong> Inserisci le 6 cifre qui sotto.{' '}
+                      ✅ <strong>Codice inviato!</strong> Inserisci le {OTP_LENGTH} cifre qui sotto.{' '}
                       <span className="font-bold">
-                        Scade in {otpExpiry}s {otpExpiry <= 10 ? '⚠️' : ''}
+                        Scade in {otpExpiry >= 60 ? `${Math.ceil(otpExpiry / 60)} min` : `${otpExpiry}s`} {otpExpiry <= 10 ? '⚠️' : ''}
                       </span>
                     </>
                   ) : (

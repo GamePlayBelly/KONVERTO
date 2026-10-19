@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { PlusCircle, Trash2, MapPin, Clock, Calendar, TrendingUp, Filter, CalendarClock, Leaf, Edit2, X, Save } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getTrips, deleteTrip, updateTrip } from '@/lib/supabase'
+import { getTrips, deleteTrip, updateTrip, processScheduledTrips } from '@/lib/supabase'
 import { TRANSPORT_META, formatCO2, formatDistance, formatDate, formatCountdown, calcCO2Saved, calcEcoPoints } from '@/lib/utils'
 import type { Trip, TransportMode } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -26,7 +26,7 @@ function nowLocal(iso?: string) {
 }
 
 export default function TripHistory() {
-  const { user } = useAuth()
+  const { user, refreshProfile } = useAuth()
   const [trips, setTrips] = useState<Trip[]>([])
   const [loading, setLoading] = useState(true)
   const [filterMode, setFilterMode] = useState<TransportMode | 'all'>('all')
@@ -45,10 +45,13 @@ export default function TripHistory() {
   const load = useCallback(async () => {
     if (!user) return
     setLoading(true)
+    // Credit any scheduled trip whose date has passed, then load the list
+    await processScheduledTrips(user.id)
     const data = await getTrips(user.id, 300)
     setTrips(data)
     setLoading(false)
-  }, [user])
+    refreshProfile()
+  }, [user, refreshProfile])
 
   useEffect(() => { load() }, [load])
 
@@ -92,6 +95,8 @@ export default function TripHistory() {
           : t
       ))
       setEditingTrip(null)
+      // updateTrip() adjusted the profile stats by the delta — refresh the context
+      refreshProfile()
     } catch {
       // silent
     } finally {

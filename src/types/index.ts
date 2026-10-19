@@ -130,6 +130,7 @@ export type NotificationType =
   | 'club_join_accepted'
   | 'club_join_rejected'
   | 'group_added'
+  | 'group_update'
   | 'challenge_received'
   | 'challenge_accepted'
 
@@ -144,10 +145,13 @@ export interface NotificationData {
   user_id?: string
   username?: string
   avatar?: string | null
-  // group_added
+  // group_added / group_update
   group_name?: string
   conv_id?: string
+  conv_name?: string
   added_by?: string
+  by_username?: string
+  message?: string
   // challenge
   challenge_id?: string
   challenger_username?: string

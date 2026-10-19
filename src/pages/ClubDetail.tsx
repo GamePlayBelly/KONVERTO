@@ -4,7 +4,7 @@ import {
   ChevronLeft, Users, Leaf, MapPin, Trophy, Settings,
   Crown, Edit2, Trash2, Save, X, Globe, Lock, Building2,
   Camera, UserPlus, Search, UserMinus, Check, CheckCircle2, MessageCircle,
-  BarChart2, Calendar, Star, Swords, Clock, Flag,
+  BarChart2, Calendar, Star, Swords, Clock, Flag, ShieldOff,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { getClubDetails, getClubMembers, updateClub, deleteClub, removeClubMember, updateClubMemberRole, searchUsersForInvite, inviteToClub, getPendingClubRequests, createClubConversation, getClubConversation, sendGroupAddedNotifications, getClubChallenges, createChallenge, supabase } from '@/lib/supabase'
