@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-// Supabase email OTP length (Auth → Providers → Email, default 6)
-const OTP_LENGTH = 6
+// Supabase OTP length configured for this project (Authentication → Emails)
+const OTP_LENGTH = 8
 
 export default function VerifyEmail() {
   const navigate = useNavigate()
@@ -24,7 +24,7 @@ export default function VerifyEmail() {
   const [success, setSuccess] = useState(false)
   const [countdown, setCountdown] = useState(0) // starts at 0 so user can immediately request a code
   const [codeSent, setCodeSent] = useState(false)
-  const [otpExpiry, setOtpExpiry] = useState(0) // countdown for OTP validity (Supabase default: 1 hour)
+  const [otpExpiry, setOtpExpiry] = useState(0) // countdown for OTP validity (60s)
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
 
   // Countdown for resend button
@@ -99,7 +99,7 @@ export default function VerifyEmail() {
       await resendOtp(email)
       setCountdown(30)
       setCodeSent(true)
-      setOtpExpiry(3600) // Supabase OTP default validity: 1 hour
+      setOtpExpiry(60) // OTP valid for 60 seconds
       setError('')
       setOtp(Array(OTP_LENGTH).fill(''))
       setTimeout(() => inputRefs.current[0]?.focus(), 50)
@@ -204,11 +204,11 @@ export default function VerifyEmail() {
                   <p className="font-semibold">⚠️ L'email di registrazione contiene un link, non un codice numerico.</p>
                   <p>Hai due opzioni:</p>
                   <p>• <strong>Clicca il bottone/link nell'email</strong> → accedi automaticamente senza inserire nulla qui</p>
-                  <p>• <strong>Oppure clicca "Invia codice numerico"</strong> qui sotto → ricevi un'email separata con il codice a 6 cifre da inserire</p>
+                  <p>• <strong>Oppure clicca "Invia codice numerico"</strong> qui sotto → ricevi un'email separata con il codice a {OTP_LENGTH} cifre da inserire</p>
                 </div>
               ) : (
                 <div className={`rounded-xl p-3 mb-4 text-xs text-left border transition-colors ${
-                  otpExpiry > 600
+                  otpExpiry > 10
                     ? 'bg-eco-green-light border-eco-green/20 text-eco-teal'
                     : otpExpiry > 0
                       ? 'bg-amber-50 border-amber-200 text-amber-800'
@@ -218,7 +218,7 @@ export default function VerifyEmail() {
                     <>
                       ✅ <strong>Codice inviato!</strong> Inserisci le {OTP_LENGTH} cifre qui sotto.{' '}
                       <span className="font-bold">
-                        Scade in {otpExpiry >= 60 ? `${Math.ceil(otpExpiry / 60)} min` : `${otpExpiry}s`} {otpExpiry <= 10 ? '⚠️' : ''}
+                        Scade in {otpExpiry}s {otpExpiry <= 10 ? '⚠️' : ''}
                       </span>
                     </>
                   ) : (
@@ -282,7 +282,7 @@ export default function VerifyEmail() {
                         : '📨 Invia codice numerico'}
                 </button>
                 <p className="text-xs text-gray-400 mt-1.5">
-                  {codeSent ? 'Non ricevi nulla? Controlla spam o riprova.' : 'Ricevi un\'email con il codice a 6 cifre da inserire sopra'}
+                  {codeSent ? 'Non ricevi nulla? Controlla spam o riprova.' : `Ricevi un'email con il codice a ${OTP_LENGTH} cifre da inserire sopra`}
                 </p>
               </div>
 
