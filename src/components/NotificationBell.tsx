@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   getNotifications, markAllNotificationsRead, deleteNotification,
   respondToFriendRequest, respondToClubRequest, respondToChallenge,
-  createOrGetPrivateConversation, supabase,
+  createOrGetPrivateConversation, leaveGroup, supabase,
 } from '@/lib/supabase'
 import type { AppNotification } from '@/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -144,12 +144,9 @@ export function NotificationBell() {
     setActing(n.id)
     try {
       if (!accept) {
-        // Rifiuta: rimuovi l'utente dal gruppo
-        await supabase
-          .from('conversation_members')
-          .delete()
-          .eq('conversation_id', n.data.conv_id)
-          .eq('user_id', user.id)
+        // Rifiuta: rimuovi l'utente dal gruppo. `conversation_members` non ha
+        // una policy DELETE, quindi un delete diretto non farebbe nulla.
+        await leaveGroup(n.data.conv_id)
       }
       await deleteNotification(n.id)
       setNotifications(prev => prev.filter(x => x.id !== n.id))

@@ -121,13 +121,18 @@ export default function Carpooling() {
     setBooking(rideId)
     try {
       if (bookedIds.includes(rideId)) {
-        await supabase.from('carpooling_bookings').delete().eq('ride_id', rideId).eq('passenger_id', user.id)
+        const { error } = await supabase.from('carpooling_bookings').delete().eq('ride_id', rideId).eq('passenger_id', user.id)
+        if (error) throw error
         setBookedIds(prev => prev.filter(id => id !== rideId))
       } else {
-        await supabase.from('carpooling_bookings').insert({ ride_id: rideId, passenger_id: user.id })
+        const { error } = await supabase.from('carpooling_bookings').insert({ ride_id: rideId, passenger_id: user.id })
+        if (error) throw error
         setBookedIds(prev => [...prev, rideId])
       }
-      load()
+      await load()
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message ?? 'Impossibile completare la prenotazione'
+      alert(msg)
     } finally {
       setBooking(null)
     }
@@ -137,7 +142,7 @@ export default function Carpooling() {
     if (!user || !form.origin_label || !form.destination_label || !form.departure_time) return
     setCreating(true)
     try {
-      await supabase.from('carpooling_rides').insert({
+      const { error } = await supabase.from('carpooling_rides').insert({
         driver_id: user.id,
         origin_label: form.origin_label,
         destination_label: form.destination_label,
@@ -147,9 +152,12 @@ export default function Carpooling() {
         price_per_seat: parseFloat(form.price_per_seat),
         notes: form.notes || null,
       })
+      if (error) throw error
       setShowCreate(false)
       setForm({ origin_label: '', destination_label: '', departure_time: '', available_seats: '3', distance_km: '', price_per_seat: '0', notes: '' })
-      load()
+      await load()
+    } catch (err: unknown) {
+      alert((err as { message?: string })?.message ?? 'Impossibile creare il passaggio')
     } finally {
       setCreating(false)
     }
@@ -158,8 +166,11 @@ export default function Carpooling() {
   const handleDeleteRide = async (rideId: string) => {
     setDeleting(rideId)
     try {
-      await supabase.from('carpooling_rides').delete().eq('id', rideId)
-      load()
+      const { error } = await supabase.from('carpooling_rides').delete().eq('id', rideId)
+      if (error) throw error
+      await load()
+    } catch (err: unknown) {
+      alert((err as { message?: string })?.message ?? 'Impossibile eliminare il passaggio')
     } finally {
       setDeleting(null)
     }

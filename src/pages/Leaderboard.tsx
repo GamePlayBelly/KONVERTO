@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Trophy, Crown, Medal, Swords, UserPlus, Check, X,
@@ -6,7 +6,7 @@ import {
   Users, Globe, ArrowUp, Clock, Gift, RefreshCw,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getMonthlyLeaderboard, getAllTimeLeaderboard, createChallenge, sendFriendRequest, awardPeriodBonuses } from '@/lib/supabase'
+import { supabase, getMonthlyLeaderboard, getAllTimeLeaderboard, createChallenge, sendFriendRequest, awardPeriodBonuses } from '@/lib/supabase'
 import { formatCO2, formatPoints, getEcoLevel } from '@/lib/utils'
 import type { ChallengeMetric } from '@/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -699,8 +699,8 @@ export default function Leaderboard() {
     setFriendSent(prev => new Set([...prev, entry.user_id]))
   }
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       // Rolling 30-day period (not calendar-month)
       const periodIdx   = getCurrentPeriodIdx()
@@ -744,11 +744,47 @@ export default function Leaderboard() {
       } catch { /* don't fail load on award errors */ }
 
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // ── Realtime "multiplayer": refresh when any player scores ──────────────────
+  // `profiles.eco_score` changes whenever someone earns points; the weekly
+  // aggregate is written by the trip trigger. Both are publicly readable, so
+  // Realtime broadcasts other users' changes too (unlike `trips`, which is RLS
+  // restricted to the owner).
+  const loadRef = useRef(load)
+  useEffect(() => { loadRef.current = load }, [load])
+
+  useEffect(() => {
+    if (!user) return
+
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(() => loadRef.current(true), 350)
+    }
+
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    try {
+      channel = supabase
+        .channel(`leaderboard-live-${user.id}-${Date.now()}`)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, scheduleRefresh)
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'leaderboard_weekly' }, scheduleRefresh)
+        .subscribe()
+    } catch { /* realtime non disponibile */ }
+
+    // Safety net: keep the board fresh even if Realtime isn't enabled yet
+    const poll = setInterval(() => loadRef.current(true), 45_000)
+
+    return () => {
+      clearInterval(poll)
+      if (refreshTimer) clearTimeout(refreshTimer)
+      if (channel) supabase.removeChannel(channel).catch(() => {})
+    }
+  }, [user])
 
   const currentEntries = period === 'monthly' ? monthly : allTime
 
@@ -785,7 +821,7 @@ export default function Leaderboard() {
             <div className="flex items-center gap-2">
               {/* Refresh button */}
               <button
-                onClick={load}
+                onClick={() => load()}
                 disabled={loading}
                 title="Aggiorna classifica"
                 className="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center transition-all disabled:opacity-50"

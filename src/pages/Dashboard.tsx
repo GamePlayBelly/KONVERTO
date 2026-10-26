@@ -5,7 +5,7 @@ import {
   Car, MessageCircle, Building2, ShoppingBag, AlertTriangle, Hand, Route, Trophy
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getTrips, getUserBadges } from '@/lib/supabase'
+import { getTrips, getTripsSince, getUserBadges } from '@/lib/supabase'
 import { formatCO2, formatDistance, formatRelative, TRANSPORT_META, getBestEquivalent, getEcoLevel } from '@/lib/utils'
 import type { Trip, UserBadge } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -65,15 +65,24 @@ const QUICK_LINKS = [
 export default function Dashboard() {
   const { profile, user } = useAuth()
   const [trips, setTrips] = useState<Trip[]>([])
+  const [weekTrips, setWeekTrips] = useState<Pick<Trip, 'recorded_at' | 'co2_saved_kg'>[]>([])
   const [badges, setBadges] = useState<UserBadge[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     if (!user) return
     try {
-      const [t, b] = await Promise.all([getTrips(user.id, 5), getUserBadges(user.id)])
+      const weekAgoISO = new Date(Date.now() - 7 * 86400000).toISOString()
+      const [t, b, w] = await Promise.all([
+        getTrips(user.id, 5),
+        getUserBadges(user.id),
+        getTripsSince(user.id, weekAgoISO),
+      ])
       setTrips(t)
       setBadges(b)
+      setWeekTrips(w)
+    } catch (err) {
+      console.error('[Dashboard] load error:', err)
     } finally {
       setLoading(false)
     }
@@ -82,9 +91,8 @@ export default function Dashboard() {
   useEffect(() => { load() }, [load])
 
   const today = new Date().toISOString().split('T')[0]
-  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString()
-  const co2Today = trips.filter(t => t.recorded_at.startsWith(today)).reduce((s, t) => s + Number(t.co2_saved_kg), 0)
-  const co2Week = trips.filter(t => t.recorded_at >= weekAgo).reduce((s, t) => s + Number(t.co2_saved_kg), 0)
+  const co2Today = weekTrips.filter(t => t.recorded_at.startsWith(today)).reduce((s, t) => s + Number(t.co2_saved_kg), 0)
+  const co2Week = weekTrips.reduce((s, t) => s + Number(t.co2_saved_kg), 0)
 
   // Streak warning: streak active but no activity today
   const showStreakWarning = !loading && profile && (profile.streak_days ?? 0) > 0 && (profile.last_activity_date ?? '') !== today

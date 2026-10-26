@@ -9,7 +9,34 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Solo utenti autenticati: senza questo controllo chiunque poteva usare la
+    // funzione come proxy gratuito e consumare la quota del token HF.
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
+    const authHeader = req.headers.get('Authorization')
+    if (!supabaseUrl || !anonKey || !authHeader) {
+      return new Response(JSON.stringify({ error: 'Non autenticato' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2')
+    const supabase = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    })
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Non autenticato' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     const { messages } = await req.json()
+    if (!Array.isArray(messages) || messages.length === 0 || messages.length > 40) {
+      return new Response(JSON.stringify({ error: 'Richiesta non valida' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
     const hfToken = Deno.env.get('HF_TOKEN')
 
     if (!hfToken) {

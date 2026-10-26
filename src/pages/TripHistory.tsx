@@ -45,11 +45,16 @@ export default function TripHistory() {
   const load = useCallback(async () => {
     if (!user) return
     setLoading(true)
-    // Credit any scheduled trip whose date has passed, then load the list
-    await processScheduledTrips(user.id)
-    const data = await getTrips(user.id, 300)
-    setTrips(data)
-    setLoading(false)
+    try {
+      // Credit any scheduled trip whose date has passed, then load the list
+      await processScheduledTrips(user.id)
+      const data = await getTrips(user.id, 300)
+      setTrips(data)
+    } catch (err) {
+      console.error('[TripHistory] load error:', err)
+    } finally {
+      setLoading(false)
+    }
     refreshProfile()
   }, [user, refreshProfile])
 
@@ -61,6 +66,8 @@ export default function TripHistory() {
     try {
       await deleteTrip(tripId)
       setTrips(prev => prev.filter(t => t.id !== tripId))
+    } catch (err) {
+      console.error('[TripHistory] delete error:', err)
     } finally {
       setDeletingId(null)
     }
@@ -97,8 +104,8 @@ export default function TripHistory() {
       setEditingTrip(null)
       // updateTrip() adjusted the profile stats by the delta — refresh the context
       refreshProfile()
-    } catch {
-      // silent
+    } catch (err) {
+      console.error('[TripHistory] update error:', err)
     } finally {
       setEditSaving(false)
     }

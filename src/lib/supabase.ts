@@ -17,6 +17,17 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 })
 
+// True only when the failure means "the SQL patch is not installed yet".
+// Everything else is a real error and must not silently fall back.
+function isMissingRpc(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false
+  return (
+    error.code === 'PGRST202' ||
+    error.code === '42883' ||
+    /could not find the function|function .* does not exist/i.test(error.message ?? '')
+  )
+}
+
 // ── Typed query helpers ──────────────────────────────────────────────────────
 
 export async function getProfile(userId: string): Promise<Profile | null> {
@@ -54,6 +65,21 @@ export async function getTrips(userId: string, limit = 20): Promise<Trip[]> {
   return (data ?? []) as Trip[]
 }
 
+// Lightweight query for dashboard aggregates: returns every trip since a date
+// (not just the last N), so "CO₂ oggi / settimana" is never truncated.
+export async function getTripsSince(
+  userId: string,
+  sinceISO: string,
+): Promise<Pick<Trip, 'recorded_at' | 'co2_saved_kg'>[]> {
+  const { data, error } = await supabase
+    .from('trips')
+    .select('recorded_at, co2_saved_kg')
+    .eq('user_id', userId)
+    .gte('recorded_at', sinceISO)
+  if (error) throw error
+  return (data ?? []) as Pick<Trip, 'recorded_at' | 'co2_saved_kg'>[]
+}
+
 export async function insertTrip(
   trip: Omit<Trip, 'id'> & { recorded_at?: string }
 ): Promise<Trip> {
@@ -71,6 +97,14 @@ export async function insertTrip(
 }
 
 export async function deleteTrip(tripId: string): Promise<void> {
+  // Server-side delete: checks ownership, subtracts points/CO₂ and deletes the
+  // row in one transaction. Direct writes to profiles.eco_score are blocked by
+  // the security patch, so this RPC is the only safe path.
+  const { error: rpcError } = await supabase.rpc('delete_trip', { p_trip_id: tripId })
+  if (!rpcError) return
+  if (!isMissingRpc(rpcError)) throw rpcError
+
+  // ── Legacy fallback (patch not installed yet) ──────────────────────────────
   // Prima leggi il viaggio per sapere quanti punti/co2 togliere dal profilo.
   // Fallback senza is_scheduled se la patch SQL non è ancora stata applicata.
   let { data: trip } = await supabase
@@ -100,9 +134,13 @@ export async function deleteTrip(tripId: string): Promise<void> {
         .select('eco_score, total_co2_saved')
         .eq('id', trip.user_id)
         .single()
+      // Never write a default 0 if the profile read failed: that would wipe
+      // the user's entire score (0 - ecoPoints clamps to 0).
+      if (!prof) return
       await supabase.from('profiles').update({
-        eco_score:       Math.max(0, (Number(prof?.eco_score)       || 0) - ecoPoints),
-        total_co2_saved: Math.max(0, (Number(prof?.total_co2_saved) || 0) - co2Saved),
+        eco_score:       Math.max(0, (Number(prof.eco_score)       || 0) - ecoPoints),
+        total_co2_saved: Math.max(0, (Number(prof.total_co2_saved) || 0) - co2Saved),
+        updated_at:      new Date().toISOString(),
       }).eq('id', trip.user_id)
     }
   }
@@ -112,6 +150,19 @@ export async function updateTrip(
   tripId: string,
   updates: Partial<Pick<Trip, 'transport_mode' | 'distance_km' | 'co2_saved_kg' | 'eco_points' | 'duration_minutes' | 'notes' | 'recorded_at'>>
 ): Promise<void> {
+  // Server-side update: recomputes metrics, adjusts profile stats by the delta
+  // and never trusts client-supplied points. Falls back only if patch absent.
+  const { error: rpcError } = await supabase.rpc('update_trip', {
+    p_trip_id: tripId,
+    p_transport_mode: updates.transport_mode ?? null,
+    p_distance_km: updates.distance_km ?? null,
+    p_notes: updates.notes ?? null,
+    p_recorded_at: updates.recorded_at ?? null,
+  })
+  if (!rpcError) return
+  if (!isMissingRpc(rpcError)) throw rpcError
+
+  // ── Legacy fallback (patch not installed yet) ──────────────────────────────
   // Read the old row first so the profile stats can be adjusted by the delta.
   // Fallback without is_scheduled if the patch SQL has not been applied yet.
   let { data: old } = await supabase
@@ -156,9 +207,16 @@ export async function updateTrip(
   }).eq('id', old.user_id)
 }
 
-/** Credits points/CO₂ for scheduled trips whose date has passed.
- *  Safe to call repeatedly: the trip is flagged before crediting. */
-export async function processScheduledTrips(userId: string): Promise<void> {
+/** Credits points/CO₂ for scheduled trips whose date has passed. */
+export async function processScheduledTrips(_userId: string): Promise<void> {
+  // Atomic server-side version: locks due rows, credits and clears the flag in
+  // one transaction (no lost points if the network drops mid-way).
+  const { error: rpcError } = await supabase.rpc('process_scheduled_trips')
+  if (!rpcError) return
+  if (!isMissingRpc(rpcError)) throw rpcError
+
+  // ── Legacy fallback (patch not installed yet) ──────────────────────────────
+  const userId = _userId
   const now = new Date().toISOString()
   const { data: due, error } = await supabase
     .from('trips')
@@ -231,57 +289,89 @@ export async function getAllTimeLeaderboard(): Promise<
   }))
 }
 
-export async function getMonthlyLeaderboard(periodStart: string): Promise<
-  { user_id: string; total_points: number; total_co2_saved: number; profile: Pick<Profile, 'username' | 'full_name' | 'avatar_url' | 'city'> }[]
-> {
-  // Fetch trips in period (for ranking by activity) + ALL profiles (for display scores)
-  const [tripsResult, profilesResult] = await Promise.all([
+type LeaderboardRow = {
+  user_id: string
+  total_points: number
+  total_co2_saved: number
+  profile: Pick<Profile, 'username' | 'full_name' | 'avatar_url' | 'city'> & { eco_score: number }
+}
+
+function mapLeaderboardRow(p: {
+  user_id: string
+  total_points: number | string | null
+  total_co2_saved: number | string | null
+  username: string
+  full_name: string | null
+  avatar_url: string | null
+  city: string | null
+  eco_score: number | string | null
+}): LeaderboardRow {
+  return {
+    user_id:         p.user_id,
+    total_points:    Number(p.total_points) || 0,
+    total_co2_saved: Number(p.total_co2_saved) || 0,
+    profile: {
+      username:   p.username,
+      full_name:  p.full_name,
+      avatar_url: p.avatar_url,
+      city:       p.city,
+      eco_score:  Number(p.eco_score) || 0,
+    },
+  }
+}
+
+export async function getMonthlyLeaderboard(periodStart: string): Promise<LeaderboardRow[]> {
+  // IMPORTANT: aggregate server-side. The `trips` RLS policy only exposes the
+  // current user's rows to the browser, so summing trips client-side made every
+  // other player show 0 points (the "only the person viewing" bug). The RPC is
+  // SECURITY DEFINER and returns aggregate totals for every profile.
+  const { data, error } = await supabase.rpc('get_period_leaderboard', {
+    p_period_start: periodStart,
+    p_limit: 200,
+  })
+
+  if (!error && data) {
+    return (data as Parameters<typeof mapLeaderboardRow>[0][]).map(mapLeaderboardRow)
+  }
+
+  // RPC not deployed yet (patch SQL not run) → fall back to the public weekly
+  // leaderboard table, which is readable by everyone.
+  if (error && error.code !== 'PGRST202' && error.code !== '42883') throw error
+
+  const since = periodStart.slice(0, 10)
+  const [weeklyResult, profilesResult] = await Promise.all([
     supabase
-      .from('trips')
-      .select('user_id, eco_points, co2_saved_kg')
-      .gte('recorded_at', periodStart),
+      .from('leaderboard_weekly')
+      .select('user_id, total_points, total_co2_saved')
+      .gte('week_start', since),
     supabase
       .from('profiles')
       .select('id, eco_score, total_co2_saved, username, full_name, avatar_url, city')
       .limit(200),
   ])
 
-  // Aggregate trips this period — used only for SORTING (most active this period first)
   const periodActivity: Record<string, { pts: number; co2: number }> = {}
-  for (const t of tripsResult.data ?? []) {
-    const uid = t.user_id as string
+  for (const row of weeklyResult.data ?? []) {
+    const uid = row.user_id as string
     if (!periodActivity[uid]) periodActivity[uid] = { pts: 0, co2: 0 }
-    periodActivity[uid].pts += (t.eco_points as number) ?? 0
-    periodActivity[uid].co2 += Number(t.co2_saved_kg) ?? 0
-  }
-
-  // Build a quick map of eco_score for tie-break without refetching
-  const profileEcoScore: Record<string, number> = {}
-  for (const p of profilesResult.data ?? []) {
-    profileEcoScore[p.id as string] = (p.eco_score as number) ?? 0
+    periodActivity[uid].pts += (row.total_points as number) ?? 0
+    periodActivity[uid].co2 += Number(row.total_co2_saved) || 0
   }
 
   return (profilesResult.data ?? [])
-    .map(p => ({
-      user_id: p.id as string,
-      // Points earned THIS period only (not all-time) — this is the correct 30-day score
+    .map(p => mapLeaderboardRow({
+      user_id:         p.id as string,
       total_points:    periodActivity[p.id as string]?.pts ?? 0,
-      // CO₂ saved THIS period
       total_co2_saved: periodActivity[p.id as string]?.co2 ?? 0,
-      profile: {
-        username:   p.username   as string,
-        full_name:  p.full_name  as string | null,
-        avatar_url: p.avatar_url as string | null,
-        city:       p.city       as string | null,
-        // Keep all-time eco_score so eco level badge shows correctly
-        eco_score:  (p.eco_score as number) ?? 0,
-      },
+      username:        p.username as string,
+      full_name:       p.full_name as string | null,
+      avatar_url:      p.avatar_url as string | null,
+      city:            p.city as string | null,
+      eco_score:       p.eco_score as number | null,
     }))
     .sort((a, b) => {
-      // Sort by period points
       if (b.total_points !== a.total_points) return b.total_points - a.total_points
-      // Tie-break: all-time eco_score
-      return (profileEcoScore[b.user_id] ?? 0) - (profileEcoScore[a.user_id] ?? 0)
+      return (b.profile.eco_score ?? 0) - (a.profile.eco_score ?? 0)
     })
     .slice(0, 100)
 }
@@ -329,12 +419,17 @@ export async function searchUsersForInvite(
   query: string,
   excludeUserIds: string[]
 ): Promise<Pick<Profile, 'id' | 'username' | 'full_name' | 'avatar_url'>[]> {
-  const { data } = await supabase
+  let request = supabase
     .from('profiles')
     .select('id, username, full_name, avatar_url')
     .ilike('username', `%${query}%`)
-    .not('id', 'in', `(${excludeUserIds.join(',')})`)
-    .limit(6)
+
+  // `in ()` is invalid PostgREST syntax → skip the filter when nothing to exclude
+  if (excludeUserIds.length > 0) {
+    request = request.not('id', 'in', `(${excludeUserIds.join(',')})`)
+  }
+
+  const { data } = await request.limit(6)
   return (data ?? []) as Pick<Profile, 'id' | 'username' | 'full_name' | 'avatar_url'>[]
 }
 
@@ -369,6 +464,14 @@ export async function deleteClub(clubId: string): Promise<void> {
 }
 
 export async function removeClubMember(clubId: string, userId: string): Promise<void> {
+  const { error: rpcError } = await supabase.rpc('remove_club_member', {
+    p_club_id: clubId,
+    p_user_id: userId,
+  })
+  if (!rpcError) return
+  if (!isMissingRpc(rpcError)) throw rpcError
+
+  // Legacy fallback (admin removal only works once the patch is installed)
   const { error } = await supabase.from('club_members').delete().eq('club_id', clubId).eq('user_id', userId)
   if (error) throw error
 }
@@ -431,6 +534,16 @@ export async function redeemClubPrize(
   clubId: string,
   pointsCost: number
 ): Promise<void> {
+  // Atomic server-side redemption: locks the prize, validates stock/points/
+  // membership and inserts the redemption in a single transaction.
+  const { error: rpcError } = await supabase.rpc('redeem_club_prize', {
+    p_prize_id: prizeId,
+    p_club_id: clubId,
+  })
+  if (!rpcError) return
+  if (!isMissingRpc(rpcError)) throw rpcError
+
+  // ── Legacy fallback (patch not installed yet) ──────────────────────────────
   // 1. Validate the prize and prevent double redemption
   const { data: prize, error: prizeErr } = await supabase
     .from('club_prizes')
@@ -516,6 +629,15 @@ export async function getUserAdminClubs(userId: string): Promise<{ club_id: stri
 }
 
 export async function updateClubMemberRole(clubId: string, userId: string, role: 'admin' | 'member'): Promise<void> {
+  const { error: rpcError } = await supabase.rpc('set_club_member_role', {
+    p_club_id: clubId,
+    p_user_id: userId,
+    p_role: role,
+  })
+  if (!rpcError) return
+  if (!isMissingRpc(rpcError)) throw rpcError
+
+  // Legacy fallback (no UPDATE policy exists on club_members → may be a no-op)
   const { error } = await supabase
     .from('club_members')
     .update({ role })
@@ -594,29 +716,40 @@ export async function respondToChallenge(
   challengerId?: string,
   responderUsername?: string,
 ): Promise<void> {
-  // Reset start/end dates from today so the match window is fair
-  const today = new Date()
-  const updates: Record<string, unknown> = { status: accept ? 'active' : 'rejected' }
-  if (accept) {
-    const startDate = today.toISOString().split('T')[0]
-    // Fetch duration to compute new end_date
-    const { data: challenge } = await supabase
-      .from('challenges')
-      .select('duration_days')
-      .eq('id', challengeId)
-      .single()
-    if (challenge) {
-      const endDate = new Date(today.getTime() + challenge.duration_days * 86400000)
-        .toISOString().split('T')[0]
-      updates.start_date = startDate
-      updates.end_date = endDate
+  // Server-side: only the challenged user may accept/reject, and only the
+  // server recomputes the match window.
+  const { error: rpcError } = await supabase.rpc('respond_to_challenge', {
+    p_challenge_id: challengeId,
+    p_accept: accept,
+  })
+
+  if (rpcError && !isMissingRpc(rpcError)) throw rpcError
+
+  // Legacy fallback (patch not installed yet)
+  if (rpcError) {
+    // Reset start/end dates from today so the match window is fair
+    const today = new Date()
+    const updates: Record<string, unknown> = { status: accept ? 'active' : 'rejected' }
+    if (accept) {
+      const startDate = today.toISOString().split('T')[0]
+      const { data: challenge } = await supabase
+        .from('challenges')
+        .select('duration_days')
+        .eq('id', challengeId)
+        .single()
+      if (challenge) {
+        const endDate = new Date(today.getTime() + challenge.duration_days * 86400000)
+          .toISOString().split('T')[0]
+        updates.start_date = startDate
+        updates.end_date = endDate
+      }
     }
+    const { error } = await supabase
+      .from('challenges')
+      .update(updates)
+      .eq('id', challengeId)
+    if (error) throw error
   }
-  const { error } = await supabase
-    .from('challenges')
-    .update(updates)
-    .eq('id', challengeId)
-  if (error) throw error
 
   // Notify challenger of acceptance
   if (accept && challengerId && responderUsername) {
@@ -721,11 +854,16 @@ export async function respondToFriendRequest(
   senderId: string,
   receiver: { id: string; username: string; avatar_url: string | null }
 ): Promise<void> {
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from('friend_requests')
     .update({ status: accept ? 'accepted' : 'rejected' })
     .eq('id', requestId)
+    .eq('receiver_id', receiver.id)
+    .select('id')
+    .maybeSingle()
   if (error) throw error
+  // 0 righe = la richiesta non esiste o non è indirizzata a questo utente
+  if (!updated) throw new Error('Richiesta non trovata')
 
   if (accept) {
     await supabase.from('notifications').insert({
@@ -1010,14 +1148,25 @@ export async function toggleReaction(messageId: string, convId: string, emoji: s
 }
 
 export async function updateGroupSettings(convId: string, name: string, goalKm: number | null, goalDeadline: string | null): Promise<void> {
-  // Use direct table update: bypasses the RPC admin check (which only looks at is_admin column,
-  // not created_by). RLS on conversations allows the creator/admin to update their own rows.
-  const { error } = await supabase.from('conversations').update({
+  // Always prefer the RPC: it enforces the admin/creator check server-side.
+  // A direct table update would work for *any* member because the `conversations`
+  // UPDATE policy only checks membership.
+  const { error } = await supabase.rpc('update_group_settings', {
+    p_conv_id: convId,
+    p_name: name,
+    p_goal_km: goalKm,
+    p_goal_deadline: goalDeadline,
+  })
+  if (!error) return
+  if (!isMissingRpc(error)) throw error
+
+  // Legacy fallback (chat patch not installed yet)
+  const { error: legacyError } = await supabase.from('conversations').update({
     name,
     group_goal_km: goalKm,
     group_goal_deadline: goalDeadline,
   }).eq('id', convId)
-  if (error) throw error
+  if (legacyError) throw legacyError
 }
 
 export async function addGroupMember(convId: string, userId: string): Promise<void> {
@@ -1031,19 +1180,31 @@ export async function removeGroupMember(convId: string, userId: string): Promise
 }
 
 export async function promoteToAdmin(convId: string, userId: string): Promise<void> {
-  const { error } = await supabase.from('conversation_members')
+  // RPC (SECURITY DEFINER): `conversation_members` has no UPDATE policy, so a
+  // direct update silently affects 0 rows.
+  const { error } = await supabase.rpc('promote_to_admin', { p_conv_id: convId, p_user_id: userId })
+  if (!error) return
+  if (!isMissingRpc(error)) throw error
+
+  // Legacy fallback (chat patch not installed yet)
+  const { error: legacyError } = await supabase.from('conversation_members')
     .update({ is_admin: true })
     .eq('conversation_id', convId)
     .eq('user_id', userId)
-  if (error) throw error
+  if (legacyError) throw legacyError
 }
 
 export async function demoteFromAdmin(convId: string, userId: string): Promise<void> {
-  const { error } = await supabase.from('conversation_members')
+  const { error } = await supabase.rpc('demote_from_admin', { p_conv_id: convId, p_user_id: userId })
+  if (!error) return
+  if (!isMissingRpc(error)) throw error
+
+  // Legacy fallback (chat patch not installed yet)
+  const { error: legacyError } = await supabase.from('conversation_members')
     .update({ is_admin: false })
     .eq('conversation_id', convId)
     .eq('user_id', userId)
-  if (error) throw error
+  if (legacyError) throw legacyError
 }
 
 export async function leaveGroup(convId: string): Promise<void> {
@@ -1106,7 +1267,7 @@ export async function incrementProfileStats(
   })
 
   if (error) {
-    // RPC unavailable — update everything manually
+    // RPC unavailable — update everything manually (legacy schema)
     await supabase.from('profiles').update({
       eco_score:          (profile.eco_score ?? 0) + ecoPoints,
       total_co2_saved:    Number(profile.total_co2_saved ?? 0) + co2Saved,
@@ -1114,14 +1275,10 @@ export async function incrementProfileStats(
       last_activity_date: today,
       updated_at:         new Date().toISOString(),
     }).eq('id', userId)
-  } else {
-    // RPC handled points/co2 — patch streak separately
-    await supabase.from('profiles').update({
-      streak_days:        newStreak,
-      last_activity_date: today,
-      updated_at:         new Date().toISOString(),
-    }).eq('id', userId)
   }
+  // On success the RPC has already updated points, CO₂ and streak atomically.
+  // Do not write streak again: the security patch blocks those columns and a
+  // second write would race with the RPC.
 }
 
 // ── Carpool expiry & auto-award ───────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Bot, User, Sparkles, Leaf, RotateCcw, Target, Bike, Globe, Trophy, Bus, AlertTriangle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getTrips } from '@/lib/supabase'
+import { getTrips, supabase } from '@/lib/supabase'
 import { TRANSPORT_META, formatCO2 } from '@/lib/utils'
 import type { ChatMessage, Trip } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -10,21 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string
-// Modelli in ordine di priorità: se il primo è sovraccarico, si tenta il secondo
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash']
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
-
-interface GeminiPart { text: string }
-interface GeminiContent { role: 'user' | 'model'; parts: GeminiPart[] }
-interface GeminiResponse {
-  candidates?: { content: { parts: GeminiPart[]; role: string }; finishReason?: string }[]
-  error?: { message: string; code?: number; status?: string }
-}
-
-function geminiUrl(model: string) {
-  return `${GEMINI_BASE}/${model}:generateContent?key=${GEMINI_API_KEY}`
-}
+interface CoachContent { role: 'user' | 'model'; parts: { text: string }[] }
 
 function friendlyError(raw: string): string {
   const l = raw.toLowerCase()
@@ -39,78 +25,42 @@ function friendlyError(raw: string): string {
   return 'Errore temporaneo con il servizio AI. Riprova tra poco 🔄'
 }
 
-async function callGemini(systemPrompt: string, history: ChatMessage[], userText: string): Promise<string> {
-  const contents: GeminiContent[] = [
+// The Gemini key lives only in the Supabase Edge Function (`gemini-chat`).
+// Never put an AI key in a VITE_* variable: those are embedded in the public bundle.
+async function callCoach(
+  systemPrompt: string,
+  history: ChatMessage[],
+  userText: string,
+): Promise<{ text: string; truncated: boolean }> {
+  const contents: CoachContent[] = [
     ...history.map(m => ({
       role: (m.role === 'user' ? 'user' : 'model') as 'user' | 'model',
       parts: [{ text: m.content }],
     })),
-    { role: 'user' as const, parts: [{ text: userText }] },
+    { role: 'user', parts: [{ text: userText }] },
   ]
-  const body = JSON.stringify({
-    systemInstruction: { parts: [{ text: systemPrompt }] },
-    contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: 4096 },
+
+  const { data, error } = await supabase.functions.invoke('gemini-chat', {
+    body: { system: systemPrompt, contents },
   })
 
-  let lastError = 'Errore sconosciuto'
-
-  for (const model of GEMINI_MODELS) {
-    // Fino a 3 tentativi per ogni modello
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) {
-        // Backoff: 1s, 2s
-        await new Promise(r => setTimeout(r, attempt * 1000))
+  if (error) {
+    let detail = error.message ?? 'Errore del servizio AI'
+    try {
+      const ctx = (error as { context?: Response }).context
+      if (ctx) {
+        const payload = await ctx.clone().json() as { error?: string }
+        if (payload?.error) detail = payload.error
       }
-      try {
-        const res = await fetch(geminiUrl(model), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body,
-        })
-
-        let data: GeminiResponse
-        try {
-          data = await res.json() as GeminiResponse
-        } catch {
-          // Risposta non-JSON (raro)
-          if (res.status === 503 || res.status === 429) {
-            lastError = `HTTP ${res.status}`
-            continue // ritenta
-          }
-          throw new Error(`HTTP ${res.status}`)
-        }
-
-        if (data.error) {
-          const code = data.error.code ?? res.status
-          lastError = data.error.message
-          // 503 / 429 / UNAVAILABLE → ritenta
-          if (code === 503 || code === 429 || data.error.status === 'UNAVAILABLE') continue
-          // Qualsiasi altro errore → esci subito con messaggio friendly
-          throw new Error(friendlyError(data.error.message))
-        }
-
-        const candidate = data.candidates?.[0]
-        const text = candidate?.content?.parts?.[0]?.text
-        if (!text) throw new Error('Risposta vuota da Gemini')
-        // Se troncata per token, aggiungi marker speciale
-        if (candidate?.finishReason === 'MAX_TOKENS') {
-          return text.trim() + '​__TRUNCATED__'
-        }
-        return text.trim()
-
-      } catch (err: unknown) {
-        // Se è già un errore friendly (lanciato da noi), rilancia
-        if (err instanceof Error && !err.message.includes('HTTP')) throw err
-        lastError = err instanceof Error ? err.message : String(err)
-        // Errori di rete → ritenta
-        continue
-      }
-    }
-    // Tutti i tentativi per questo modello falliti → passa al modello di fallback
+    } catch { /* keep generic message */ }
+    throw new Error(friendlyError(detail))
   }
 
-  throw new Error(friendlyError(lastError))
+  const payload = data as { text?: string; truncated?: boolean; error?: string } | null
+  if (payload?.error) throw new Error(friendlyError(payload.error))
+  if (!payload?.text?.trim()) throw new Error('Risposta vuota dal servizio AI')
+
+  return { text: payload.text.trim(), truncated: Boolean(payload.truncated) }
 }
 
 const QUICK_PROMPTS: { icon: LucideIcon; color: string; text: string }[] = [
@@ -251,7 +201,11 @@ export default function AIAssistant() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    if (user) getTrips(user.id, 30).then(t => { setTrips(t); setTripsLoaded(true) })
+    if (user) {
+      getTrips(user.id, 30)
+        .then(t => { setTrips(t); setTripsLoaded(true) })
+        .catch(() => setTripsLoaded(true))
+    }
   }, [user])
 
   useEffect(() => {
@@ -270,10 +224,9 @@ export default function AIAssistant() {
       const context = buildContext(trips, profile?.eco_score ?? 0, Number(profile?.total_co2_saved ?? 0))
       const systemWithCtx = `${SYSTEM_PROMPT}\n\n${context}`
 
-      const raw = await callGemini(systemWithCtx, messages, text.trim())
-      const truncated = raw.endsWith('​__TRUNCATED__')
-      const reply = truncated ? raw.slice(0, -'​__TRUNCATED__'.length) : raw
-      setMessages(prev => [...prev, { role: 'assistant', content: reply, truncated }])
+      const raw = await callCoach(systemWithCtx, messages, text.trim())
+      const reply = raw.text
+      setMessages(prev => [...prev, { role: 'assistant', content: reply, truncated: raw.truncated }])
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Errore di connessione con Gemini'
       setMessages(prev => [...prev, {
