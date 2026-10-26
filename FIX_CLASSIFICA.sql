@@ -64,6 +64,16 @@ REVOKE ALL ON FUNCTION public.get_period_leaderboard(TIMESTAMPTZ, INTEGER) FROM 
 GRANT EXECUTE ON FUNCTION public.get_period_leaderboard(TIMESTAMPTZ, INTEGER) TO authenticated;
 
 -- 2. Tabella settimanale: trigger corretto (settimana da lunedì) ─────────────
+CREATE TABLE IF NOT EXISTS public.leaderboard_weekly (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  week_start DATE NOT NULL,
+  total_points INTEGER DEFAULT 0,
+  total_co2_saved NUMERIC(10,3) DEFAULT 0,
+  total_distance_km NUMERIC(10,2) DEFAULT 0,
+  UNIQUE(user_id, week_start)
+);
+
 CREATE OR REPLACE FUNCTION public.update_weekly_leaderboard()
 RETURNS TRIGGER
 LANGUAGE plpgsql
