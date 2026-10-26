@@ -334,16 +334,29 @@ export async function getMonthlyLeaderboard(periodStart: string): Promise<Leader
     return (data as Parameters<typeof mapLeaderboardRow>[0][]).map(mapLeaderboardRow)
   }
 
-  // RPC not deployed yet (patch SQL not run) → fall back to the public weekly
-  // leaderboard table, which is readable by everyone.
-  if (error && error.code !== 'PGRST202' && error.code !== '42883') throw error
+  // RPC not deployed yet (patch SQL not run) → degraded fallback.
+  // Any other error is real and must not be masked as "everybody has 0 points".
+  if (error && !isMissingRpc(error)) throw error
 
-  const since = periodStart.slice(0, 10)
-  const [weeklyResult, profilesResult] = await Promise.all([
+  // The fallback combines the two things the browser is allowed to read:
+  //  • leaderboard_weekly → aggregates for every player (written by the trip trigger)
+  //  • trips              → only the viewer's own rows, but exact for the period
+  // Using both keeps the viewer's score correct even if the weekly table is
+  // empty (e.g. the trigger was never installed), instead of showing a board
+  // where literally everyone has 0.
+  const sinceDate = periodStart.slice(0, 10)
+  const sinceISO = periodStart
+
+  const [weeklyResult, ownTripsResult, profilesResult] = await Promise.all([
     supabase
       .from('leaderboard_weekly')
       .select('user_id, total_points, total_co2_saved')
-      .gte('week_start', since),
+      .gte('week_start', sinceDate),
+    supabase
+      .from('trips')
+      .select('user_id, eco_points, co2_saved_kg')
+      .gte('recorded_at', sinceISO)
+      .lte('recorded_at', new Date().toISOString()),
     supabase
       .from('profiles')
       .select('id, eco_score, total_co2_saved, username, full_name, avatar_url, city')
@@ -357,6 +370,20 @@ export async function getMonthlyLeaderboard(periodStart: string): Promise<Leader
     periodActivity[uid].pts += (row.total_points as number) ?? 0
     periodActivity[uid].co2 += Number(row.total_co2_saved) || 0
   }
+
+  // Own trips are readable thanks to RLS and are exact for the period, so they
+  // override the weekly aggregate for the current user (which can be empty or
+  // include days before the period start).
+  const exactOwn: Record<string, { pts: number; co2: number }> = {}
+  for (const t of ownTripsResult.data ?? []) {
+    const uid = t.user_id as string
+    if (!exactOwn[uid]) exactOwn[uid] = { pts: 0, co2: 0 }
+    exactOwn[uid].pts += Number(t.eco_points) || 0
+    exactOwn[uid].co2 += Number(t.co2_saved_kg) || 0
+  }
+  Object.assign(periodActivity, exactOwn)
+
+  if (error) console.warn('[leaderboard] get_period_leaderboard RPC assente: uso il fallback client-side')
 
   return (profilesResult.data ?? [])
     .map(p => mapLeaderboardRow({

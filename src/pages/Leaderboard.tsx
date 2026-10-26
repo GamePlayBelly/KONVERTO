@@ -702,9 +702,11 @@ export default function Leaderboard() {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      // Rolling 30-day period (not calendar-month)
+      // Ranking window: the last 30 days ending now (rolling), exactly as the
+      // page says ("ultimi 30 giorni"). Using the fixed 30-day season window
+      // here made the whole board drop to 0 on the first day of every season.
       const periodIdx   = getCurrentPeriodIdx()
-      const periodStart = getPeriodStart(periodIdx).toISOString()
+      const periodStart = new Date(Date.now() - PERIOD_MS).toISOString()
 
       const [m, a] = await Promise.all([
         getMonthlyLeaderboard(periodStart),
@@ -743,6 +745,10 @@ export default function Leaderboard() {
         }
       } catch { /* don't fail load on award errors */ }
 
+    } catch (err) {
+      // Never leave the page on a silently empty board: log it and keep the
+      // last good data. The next poll (45s) or the refresh button retries.
+      console.error('[Leaderboard] load error:', err)
     } finally {
       if (!silent) setLoading(false)
     }

@@ -123,8 +123,12 @@ export function formatDistance(km: number): string {
 }
 
 export function formatPoints(pts: number): string {
-  if (pts >= 1000) return `${(pts / 1000).toFixed(1)}k`
-  return String(pts)
+  const n = Number(pts) || 0
+  const abs = Math.abs(n)
+  // Above ~1M the "k" suffix produces unreadable values (14808.9k instead of 14.8M).
+  if (abs >= 999_950) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (abs >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return String(n)
 }
 
 // ── CO₂ equivalenti ──────────────────────────────────────────────────────────
