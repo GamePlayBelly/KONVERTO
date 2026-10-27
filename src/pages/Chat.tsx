@@ -208,13 +208,13 @@ export default function Chat() {
     setGroupSearch(q)
     if (q.length < 2) { setGroupResults([]); return }
     setGroupSearching(true)
-    const excludeIds = [user?.id ?? '', ...selectedMembers.map(m => m.id)]
-    const { data } = await supabase
+    const excludeIds = [user?.id, ...selectedMembers.map(m => m.id)].filter(Boolean) as string[]
+    let request = supabase
       .from('profiles')
       .select('id,username,full_name,avatar_url')
-      .not('id', 'in', `(${excludeIds.join(',')})`)
-      .ilike('username', `%${q}%`)
-      .limit(8)
+    // `id=not.in.()` is invalid PostgREST syntax → only filter when non-empty
+    if (excludeIds.length > 0) request = request.not('id', 'in', `(${excludeIds.join(',')})`)
+    const { data } = await request.ilike('username', `%${q}%`).limit(8)
     setGroupResults((data ?? []) as UserResult[])
     setGroupSearching(false)
   }

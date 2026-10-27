@@ -33,17 +33,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s)
-      setUser(s?.user ?? null)
-      if (s?.user) loadProfile(s.user.id).finally(() => setLoading(false))
-      else setLoading(false)
-    })
+    supabase.auth.getSession()
+      .then(({ data: { session: s } }) => {
+        setSession(s)
+        setUser(s?.user ?? null)
+        if (s?.user) loadProfile(s.user.id).finally(() => setLoading(false))
+        else setLoading(false)
+      })
+      .catch(() => setLoading(false))
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s)
       setUser(s?.user ?? null)
-      if (s?.user) loadProfile(s.user.id)
+      if (s?.user) loadProfile(s.user.id).catch(() => setProfile(null))
       else setProfile(null)
       // When the user clicks the magic link in the email, Supabase fires SIGNED_IN
       // with a confirmed user — clear the sessionStorage flag

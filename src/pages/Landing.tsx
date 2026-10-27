@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Leaf, ArrowRight, Wind, BarChart3, Trophy, Bot, MapPin, Zap, Shield, Globe, Footprints, Bike, Bus, Car, Heart } from 'lucide-react'
+import { Leaf, ArrowRight, Wind, BarChart3, Trophy, Bot, MapPin, Zap, Shield, Footprints, Bike, Bus, Car, Heart } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -118,10 +118,6 @@ export default function Landing() {
           <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-emerald-300/10 rounded-full blur-3xl" />
         </div>
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <div className="inline-flex items-center gap-2 bg-eco-green-light border border-eco-green/20 rounded-full px-4 py-1.5 text-sm font-medium text-eco-teal mb-8 animate-fade-in">
-            <Globe className="w-4 h-4" />
-            Unisciti a 8.400+ utenti che stanno salvando il pianeta
-          </div>
           <h1 className="text-5xl sm:text-6xl lg:text-7xl font-extrabold text-gray-900 leading-tight mb-6 animate-fade-in">
             Muoviti verde.{' '}
             <span className="text-eco-green">Guadagna punti.</span>

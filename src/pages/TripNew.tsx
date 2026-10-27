@@ -6,7 +6,7 @@ import {
   LocateFixed,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { insertTrip, incrementProfileStats } from '@/lib/supabase'
+import { insertTrip, incrementProfileStats, supabase } from '@/lib/supabase'
 import {
   calcCO2Saved, calcEcoPoints, TRANSPORT_META, getBestEquivalent,
   suggestModes, formatDistance, maxTripKm,
@@ -282,7 +282,21 @@ export default function TripNew() {
     try {
       // ── Smart working shortcut ──
       if (isSmartWorking) {
-        await insertTrip({
+        const startOfDay = new Date()
+        startOfDay.setHours(0, 0, 0, 0)
+        const { data: alreadyLogged } = await supabase
+          .from('trips')
+          .select('id')
+          .eq('user_id', user.id)
+          .ilike('notes', 'Smart Working%')
+          .gte('recorded_at', startOfDay.toISOString())
+          .limit(1)
+        if (alreadyLogged && alreadyLogged.length > 0) {
+          setError('Hai già registrato lo smart working oggi.')
+          setLoading(false)
+          return
+        }
+        const saved = await insertTrip({
           user_id: user.id,
           transport_mode: 'walking',
           distance_km: 0,
@@ -294,9 +308,10 @@ export default function TripNew() {
           notes: 'Smart Working — giornata da casa',
           recorded_at: new Date().toISOString(),
         })
-        await incrementProfileStats(user.id, SMART_WORKING_PTS, 0)
+        // Use the values the DB stored (the server recomputes them).
+        await incrementProfileStats(user.id, saved.eco_points, Number(saved.co2_saved_kg) || 0)
         await refreshProfile()
-        setEarnedPts(SMART_WORKING_PTS)
+        setEarnedPts(saved.eco_points)
         setSuccess(true)
         setTimeout(() => navigate('/dashboard'), 2200)
         return
@@ -335,12 +350,12 @@ export default function TripNew() {
       }
       if (isScheduled) payload.is_scheduled = true
 
-      await insertTrip(payload)
+      const saved = await insertTrip(payload)
       if (!isScheduled) {
-        await incrementProfileStats(user.id, pts, co2)
+        await incrementProfileStats(user.id, saved.eco_points, Number(saved.co2_saved_kg) || 0)
         await refreshProfile()
       }
-      setEarnedPts(pts)
+      setEarnedPts(saved.eco_points)
       setSuccess(true)
       setTimeout(() => navigate('/dashboard'), 2200)
     } catch (err: unknown) {
@@ -349,6 +364,8 @@ export default function TripNew() {
       const msg = supaErr?.message ?? (err instanceof Error ? err.message : null)
       if (msg?.includes('transport_mode') || supaErr?.code === '23514') {
         setError('Mezzo non supportato dal DB. Esegui in Supabase SQL Editor:\nALTER TABLE trips DROP CONSTRAINT IF EXISTS trips_transport_mode_check;\nALTER TABLE trips ADD CONSTRAINT trips_transport_mode_check CHECK (transport_mode IN (\'walking\',\'cycling\',\'ebike\',\'escooter\',\'public_transport\',\'tram_metro\',\'train\',\'electric_vehicle\',\'motorcycle\',\'carpooling\',\'car\',\'airplane\'));')
+      } else if (msg?.includes('SMART_WORKING_ALREADY_LOGGED')) {
+        setError('Hai già registrato lo smart working oggi.')
       } else if (msg?.includes('column') || supaErr?.code === '42703') {
         setError('Colonna mancante nel database. Esegui supabase_complete_schema.sql per aggiornare lo schema.')
       } else {

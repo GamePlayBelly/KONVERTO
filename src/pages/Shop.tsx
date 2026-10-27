@@ -15,7 +15,7 @@ import {
   redeemClubPrize, getUserClubPrizeRedemptions, getUserAdminClubs,
 } from '@/lib/supabase'
 import type { ClubPrize } from '@/lib/supabase'
-import { getStreakStatus } from '@/lib/utils'
+import { useOwnStreak } from '@/hooks/useOwnStreak'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -681,7 +681,8 @@ function ClubPrizesTab({ userId, userPoints, onPointsChanged }: {
 // ── BadgesTab ────────────────────────────────────────────────────────────────
 
 function BadgesTab({ tripCount, totalKm, carpoolCount }: { tripCount: number; totalKm: number; carpoolCount: number }) {
-  const { profile } = useAuth()
+  const { user, profile } = useAuth()
+  const ownStreak = useOwnStreak(user?.id, profile)
 
   const getValue = (metric: BadgeMetric): number => {
     if (!profile) return 0
@@ -689,7 +690,7 @@ function BadgesTab({ tripCount, totalKm, carpoolCount }: { tripCount: number; to
       case 'trips':   return tripCount
       case 'km':      return totalKm
       case 'co2':     return Number(profile.total_co2_saved ?? 0)
-      case 'streak':  return getStreakStatus(profile).days
+      case 'streak':  return ownStreak.days
       case 'points':  return profile.eco_score ?? 0
       case 'carpool': return carpoolCount
     }

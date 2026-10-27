@@ -443,9 +443,10 @@ export default function ChatRoom() {
     setAddQuery(q)
     if (q.length < 2) { setAddResults([]); return }
     const ex = members.map(m => m.user_id)
-    const { data } = await supabase.from('profiles').select('id,username,full_name,avatar_url')
-      .not('id', 'in', `(${ex.join(',')})`)
-      .ilike('username', `%${q}%`).limit(5)
+    let request = supabase.from('profiles').select('id,username,full_name,avatar_url')
+    // PostgREST rejects `id=not.in.()` — only apply the filter when non-empty.
+    if (ex.length > 0) request = request.not('id', 'in', `(${ex.join(',')})`)
+    const { data } = await request.ilike('username', `%${q}%`).limit(5)
     setAddResults((data ?? []) as typeof addResults)
   }
 

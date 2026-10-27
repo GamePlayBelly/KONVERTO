@@ -1,10 +1,11 @@
 import { createServer } from 'http'
-import { readFileSync, existsSync, statSync } from 'fs'
-import { join, extname } from 'path'
+import { readFileSync, statSync } from 'fs'
+import { join, extname, sep } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const DIST = join(__dirname, 'dist')
+const INDEX = join(DIST, 'index.html')
 const PORT = process.env.PORT || 3000
 
 const MIME = {
@@ -25,35 +26,77 @@ const MIME = {
   '.map':   'application/json',
 }
 
-const index = join(DIST, 'index.html')
+// True only for files strictly inside DIST. A plain startsWith() would also
+// match sibling directories like `dist-evil` or `dist_backup`.
+function isInsideDist(filePath) {
+  return filePath === DIST || filePath.startsWith(DIST + sep)
+}
+
+function isFile(filePath) {
+  try {
+    return statSync(filePath).isFile()
+  } catch {
+    return false
+  }
+}
+
+function sendSpAFallback(req, res) {
+  try {
+    const html = readFileSync(INDEX)
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.end(req.method === 'HEAD' ? undefined : html)
+  } catch {
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' })
+    res.end('Build non trovata: esegui "npm run build" prima di avviare il server.')
+  }
+}
 
 createServer((req, res) => {
-  // Strip query string
-  const url = req.url.split('?')[0]
-  const filePath = join(DIST, url)
-
-  // Security: prevent path traversal
-  if (!filePath.startsWith(DIST)) {
-    res.writeHead(403); res.end(); return
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { Allow: 'GET, HEAD' })
+    res.end()
+    return
   }
 
-  const ext = extname(filePath).toLowerCase()
+  let pathname = '/'
+  try {
+    pathname = decodeURIComponent((req.url ?? '/').split('?')[0])
+  } catch {
+    res.writeHead(400)
+    res.end()
+    return
+  }
 
-  // Serve static asset if it exists as a file
-  if (ext && existsSync(filePath) && statSync(filePath).isFile()) {
-    res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream')
-    // Cache immutable assets (hashed filenames)
-    if (url.startsWith('/assets/')) {
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+  const filePath = join(DIST, pathname)
+
+  // Security: prevent path traversal (and prefix bypasses)
+  if (!isInsideDist(filePath)) {
+    res.writeHead(403)
+    res.end()
+    return
+  }
+
+  if (isFile(filePath)) {
+    try {
+      const body = readFileSync(filePath)
+      res.setHeader('Content-Type', MIME[extname(filePath).toLowerCase()] || 'application/octet-stream')
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+      // Cache immutable hashed assets
+      if (pathname.startsWith('/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+      }
+      res.end(req.method === 'HEAD' ? undefined : body)
+    } catch {
+      res.writeHead(500)
+      res.end()
     }
-    res.end(readFileSync(filePath))
     return
   }
 
   // SPA fallback → always serve index.html
-  res.setHeader('Content-Type', 'text/html; charset=utf-8')
-  res.setHeader('Cache-Control', 'no-cache')
-  res.end(readFileSync(index))
+  sendSpAFallback(req, res)
 }).listen(PORT, () => {
   console.log(`EcoTrack server running on port ${PORT}`)
 })

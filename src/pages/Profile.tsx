@@ -7,7 +7,8 @@ import {
 } from 'recharts'
 import { useAuth } from '@/contexts/AuthContext'
 import { getTrips, getAllBadges, getUserBadges, updateProfile, getChallenges, respondToChallenge, getUserPurchasedTitles, getFriends, createOrGetPrivateConversation, supabase } from '@/lib/supabase'
-import { formatCO2, formatDistance, formatDate, getCO2Equivalents, TRANSPORT_META, getEcoLevel, getStreakStatus } from '@/lib/utils'
+import { formatCO2, formatDistance, formatDate, getCO2Equivalents, TRANSPORT_META, getEcoLevel } from '@/lib/utils'
+import { useOwnStreak } from '@/hooks/useOwnStreak'
 import type { Trip, Badge as BadgeType, UserBadge, Challenge, TransportMode } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -129,6 +130,7 @@ type Friend = { friendId: string; profile: { username: string; full_name: string
 
 export default function Profile() {
   const { user, profile, refreshProfile } = useAuth()
+  const ownStreak = useOwnStreak(user?.id, profile)
   const navigate = useNavigate()
   const [trips, setTrips] = useState<Trip[]>([])
   const [_allBadges, setAllBadges] = useState<BadgeType[]>([])
@@ -363,7 +365,7 @@ export default function Profile() {
                   <p className="text-xs text-gray-400">Badge</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-lg font-bold text-orange-500">{getStreakStatus(profile).days}</p>
+                  <p className="text-lg font-bold text-orange-500">{ownStreak.days}</p>
                   <p className="text-xs text-gray-400">Streak</p>
                 </div>
               </div>
@@ -452,7 +454,7 @@ export default function Profile() {
                 </CardContent></Card>
                 <Card><CardContent className="p-4 text-center">
                   <TrendingUp className="w-5 h-5 text-amber-500 mx-auto mb-1" />
-                  <p className="text-base font-bold text-gray-900">{getStreakStatus(profile).days} gg</p>
+                  <p className="text-base font-bold text-gray-900">{ownStreak.days} gg</p>
                   <p className="text-xs text-gray-400">Streak</p>
                 </CardContent></Card>
               </>
@@ -734,7 +736,7 @@ export default function Profile() {
                 case 'trips':  return tripCount
                 case 'km':     return totalKm
                 case 'co2':    return Number(profile?.total_co2_saved ?? 0)
-                case 'streak': return getStreakStatus(profile).days
+                case 'streak': return ownStreak.days
                 case 'points': return profile?.eco_score ?? 0
               }
             }

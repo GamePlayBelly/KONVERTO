@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Trophy, Crown, Medal, Swords, UserPlus, Check, X,
@@ -6,8 +6,9 @@ import {
   Users, Globe, ArrowUp, Clock, Gift, RefreshCw,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getMonthlyLeaderboard, getAllTimeLeaderboard, createChallenge, sendFriendRequest, awardPeriodBonuses } from '@/lib/supabase'
-import { formatCO2, formatPoints, getEcoLevel, getStreakStatus } from '@/lib/utils'
+import { useOwnStreak } from '@/hooks/useOwnStreak'
+import { supabase, getMonthlyLeaderboard, getAllTimeLeaderboard, createChallenge, sendFriendRequest, awardPeriodBonuses } from '@/lib/supabase'
+import { formatCO2, formatPoints, getEcoLevel } from '@/lib/utils'
 import type { ChallengeMetric } from '@/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -684,6 +685,7 @@ const PERIOD_META: Record<Period, { label: string; icon: React.ReactNode; sub: s
 
 export default function Leaderboard() {
   const { user, profile } = useAuth()
+  const ownStreak = useOwnStreak(user?.id, profile)
   const [period, setPeriod] = useState<Period>('monthly')
   const [monthly, setMonthly] = useState<RankedEntry[]>([])
   const [allTime, setAllTime] = useState<RankedEntry[]>([])
@@ -699,12 +701,14 @@ export default function Leaderboard() {
     setFriendSent(prev => new Set([...prev, entry.user_id]))
   }
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
-      // Rolling 30-day period (not calendar-month)
+      // Ranking window: the last 30 days ending now (rolling), exactly as the
+      // page says ("ultimi 30 giorni"). Using the fixed 30-day season window
+      // here made the whole board drop to 0 on the first day of every season.
       const periodIdx   = getCurrentPeriodIdx()
-      const periodStart = getPeriodStart(periodIdx).toISOString()
+      const periodStart = new Date(Date.now() - PERIOD_MS).toISOString()
 
       const [m, a] = await Promise.all([
         getMonthlyLeaderboard(periodStart),
@@ -743,12 +747,52 @@ export default function Leaderboard() {
         }
       } catch { /* don't fail load on award errors */ }
 
+    } catch (err) {
+      // Never leave the page on a silently empty board: log it and keep the
+      // last good data. The next poll (45s) or the refresh button retries.
+      console.error('[Leaderboard] load error:', err)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // ── Realtime "multiplayer": refresh when any player scores ──────────────────
+  // `profiles.eco_score` changes whenever someone earns points; the weekly
+  // aggregate is written by the trip trigger. Both are publicly readable, so
+  // Realtime broadcasts other users' changes too (unlike `trips`, which is RLS
+  // restricted to the owner).
+  const loadRef = useRef(load)
+  useEffect(() => { loadRef.current = load }, [load])
+
+  useEffect(() => {
+    if (!user) return
+
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(() => loadRef.current(true), 350)
+    }
+
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    try {
+      channel = supabase
+        .channel(`leaderboard-live-${user.id}-${Date.now()}`)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, scheduleRefresh)
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'leaderboard_weekly' }, scheduleRefresh)
+        .subscribe()
+    } catch { /* realtime non disponibile */ }
+
+    // Safety net: keep the board fresh even if Realtime isn't enabled yet
+    const poll = setInterval(() => loadRef.current(true), 45_000)
+
+    return () => {
+      clearInterval(poll)
+      if (refreshTimer) clearTimeout(refreshTimer)
+      if (channel) supabase.removeChannel(channel).catch(() => {})
+    }
+  }, [user])
 
   const currentEntries = period === 'monthly' ? monthly : allTime
 
@@ -785,7 +829,7 @@ export default function Leaderboard() {
             <div className="flex items-center gap-2">
               {/* Refresh button */}
               <button
-                onClick={load}
+                onClick={() => load()}
                 disabled={loading}
                 title="Aggiorna classifica"
                 className="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center transition-all disabled:opacity-50"
@@ -794,10 +838,10 @@ export default function Leaderboard() {
               </button>
               {user && profile && (
                 <div className="flex items-center gap-2 bg-white/15 rounded-2xl px-3 py-2">
-                  {getStreakStatus(profile).days > 0 && (
+                  {ownStreak.days > 0 && (
                     <div className="flex items-center gap-1">
                       <Flame className="w-3.5 h-3.5 text-orange-300" />
-                      <span className="text-xs font-bold text-white">{getStreakStatus(profile).days}gg</span>
+                      <span className="text-xs font-bold text-white">{ownStreak.days}gg</span>
                     </div>
                   )}
                   <div className="w-px h-4 bg-white/30" />

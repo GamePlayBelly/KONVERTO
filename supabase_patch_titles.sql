@@ -7,14 +7,27 @@
 -- Add active_title column to profiles (safe if already exists)
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS active_title TEXT DEFAULT NULL;
 
+-- La categoria 'title' non era ammessa dal CHECK originale: senza questo
+-- passaggio l'INSERT qui sotto falliva e i titoli non apparivano mai.
+ALTER TABLE shop_items DROP CONSTRAINT IF EXISTS shop_items_category_check;
+ALTER TABLE shop_items
+  ADD CONSTRAINT shop_items_category_check
+  CHECK (category IN ('voucher','gadget','experience','donation','badge_special','title'));
+
 -- Insert the 6 title items into shop_items.
--- ON CONFLICT (id) DO NOTHING means it's safe to run multiple times.
-INSERT INTO shop_items (id, name, description, category, points_cost, stock, is_active, partner_name)
-VALUES
-  ('t1', '🌱 Eco Novizio',           'Il primo passo verso la mobilità sostenibile. Si sblocca da subito.',      'title', 100,  NULL, true, NULL),
-  ('t2', '🚴 Ciclista Urbano',        'Per chi percorre almeno 50 km in bici in città.',                         'title', 300,  NULL, true, NULL),
-  ('t3', '⚡ Guerriero Verde',         'Titolo per i campioni della mobilità a zero emissioni.',                  'title', 600,  NULL, true, NULL),
-  ('t4', '🌍 Custode del Pianeta',     'Hai risparmiato oltre 50 kg di CO₂. Il pianeta ti ringrazia.',           'title', 1000, NULL, true, NULL),
-  ('t5', '🏆 Eco Leggenda',            'Il titolo più prestigioso. Solo per i più dedicati.',                    'title', 2500, NULL, true, NULL),
-  ('t6', '🚂 Pendolare Sostenibile',   'Per chi usa quotidianamente treni e trasporti pubblici.',                'title', 450,  NULL, true, NULL)
-ON CONFLICT (id) DO NOTHING;
+-- Gli id sono UUID generati: gli id testuali ('t1'...) non sono validi per la
+-- colonna UUID e facevano fallire tutto il blocco.
+-- Skip delle righe già presenti (per nome) → sicuro da rieseguire.
+INSERT INTO shop_items (name, description, category, points_cost, stock, is_active, partner_name)
+SELECT v.name, v.description, 'title', v.points_cost, NULL, TRUE, NULL
+FROM (VALUES
+  ('🌱 Eco Novizio',         'Il primo passo verso la mobilità sostenibile. Si sblocca da subito.',  100),
+  ('🚴 Ciclista Urbano',      'Per chi percorre almeno 50 km in bici in città.',                       300),
+  ('⚡ Guerriero Verde',       'Titolo per i campioni della mobilità a zero emissioni.',                600),
+  ('🌍 Custode del Pianeta',   'Hai risparmiato oltre 50 kg di CO₂. Il pianeta ti ringrazia.',         1000),
+  ('🏆 Eco Leggenda',          'Il titolo più prestigioso. Solo per i più dedicati.',                  2500),
+  ('🚂 Pendolare Sostenibile', 'Per chi usa quotidianamente treni e trasporti pubblici.',              450)
+) AS v(name, description, points_cost)
+WHERE NOT EXISTS (
+  SELECT 1 FROM shop_items s WHERE s.name = v.name
+);
