@@ -112,9 +112,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error
   }
 
-  const refreshProfile = async () => {
-    if (user) await loadProfile(user.id)
-  }
+  // Stable identity (changes only when the signed-in user changes): pages put this in
+  // effect/callback dependencies, so a new function on every render caused reload loops.
+  const userId = user?.id
+  const refreshProfile = useCallback(async () => {
+    if (userId) await loadProfile(userId)
+  }, [userId, loadProfile])
 
   return (
     <AuthContext.Provider

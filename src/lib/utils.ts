@@ -55,6 +55,28 @@ export const TRANSPORT_META: Record<
   airplane:          { label: 'Aereo',          emoji: '✈️', color: 'text-sky-600',     bgColor: 'bg-sky-50',      co2Label: '255 g/km' },
 }
 
+// Distanza massima plausibile per UN viaggio, per mezzo (km). Senza un tetto bastava
+// scrivere "238623 km a piedi" per ottenere milioni di punti e falsare ogni classifica.
+export const MAX_TRIP_KM: Record<TransportMode, number> = {
+  walking:           100,
+  cycling:           400,
+  ebike:             300,
+  escooter:          80,
+  public_transport:  500,
+  tram_metro:        300,
+  train:             2500,
+  electric_vehicle:  2000,
+  motorcycle:        2000,
+  carpooling:        1500,
+  car:               2000,
+  airplane:          12000,
+}
+
+/** Tetto km per un viaggio fatto con uno o più mezzi (multi-mezzo → vale il più alto). */
+export function maxTripKm(modes: TransportMode[]): number {
+  return Math.max(...modes.map(m => MAX_TRIP_KM[m] ?? 0))
+}
+
 // Suggest best modes for a given distance (eco-first)
 export function suggestModes(km: number): TransportMode[] {
   if (km <= 0)   return ['cycling', 'walking', 'escooter']
@@ -75,6 +97,58 @@ export function getWeekStart(date: Date = new Date()): string {
   const diff = d.getDate() - day + (day === 0 ? -6 : 1)
   d.setDate(diff)
   return d.toISOString().split('T')[0]
+}
+
+// ── Streak (giorni di calendario nel fuso orario del dispositivo) ─────────────
+
+/** 'YYYY-MM-DD' nel fuso locale. toISOString() darebbe la data UTC, che di notte
+ *  (00:00–02:00 in Italia) è ancora "ieri" e spezzava le serie. */
+export function toLocalDateStr(d: Date = new Date()): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Somma `n` giorni di calendario a 'YYYY-MM-DD' (sicuro anche col cambio ora legale). */
+export function addDaysToDateStr(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return toLocalDateStr(new Date(y, m - 1, d + n))
+}
+
+/** Streak = giorni consecutivi con almeno un viaggio, che arrivano a oggi o a ieri.
+ *  `lastDay` è l'ultimo giorno con attività (anche se la serie è ormai spezzata). */
+export function computeStreak(
+  days: Iterable<string>,
+  today: string = toLocalDateStr(),
+): { streak: number; lastDay: string | null } {
+  const set = new Set(days)
+  let lastDay: string | null = null
+  for (const d of set) if (d <= today && (lastDay === null || d > lastDay)) lastDay = d
+  if (lastDay === null) return { streak: 0, lastDay: null }
+  if (lastDay < addDaysToDateStr(today, -1)) return { streak: 0, lastDay }
+  let streak = 0
+  for (let d = lastDay; set.has(d); d = addDaysToDateStr(d, -1)) streak++
+  return { streak, lastDay }
+}
+
+export type StreakStatus = 'none' | 'active' | 'at_risk' | 'lost'
+
+/** Streak "vera" da mostrare: il valore salvato nel profilo non scade da solo, quindi
+ *  se l'ultima attività è più vecchia di ieri la serie è già persa (0 giorni).
+ *   none    = nessuna serie   · active = hai già registrato oggi
+ *   at_risk = ultima attività ieri, oggi non ancora → registra per non perderla
+ *   lost    = serie spezzata (nessun avviso: meglio ripartire che mostrare un vecchio 1) */
+export function getStreakStatus(
+  profile: { streak_days?: number | null; last_activity_date?: string | null } | null | undefined,
+  today: string = toLocalDateStr(),
+): { days: number; status: StreakStatus } {
+  const stored = profile?.streak_days ?? 0
+  const last = profile?.last_activity_date ?? null
+  if (stored <= 0 || !last) return { days: 0, status: 'none' }
+  if (last >= today) return { days: stored, status: 'active' }
+  if (last === addDaysToDateStr(today, -1)) return { days: stored, status: 'at_risk' }
+  return { days: 0, status: 'lost' }
 }
 
 export function formatDate(dateStr: string): string {

@@ -5,8 +5,8 @@ import {
   Car, MessageCircle, Building2, ShoppingBag, AlertTriangle, Hand, Route, Trophy
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getTrips, getUserBadges } from '@/lib/supabase'
-import { formatCO2, formatDistance, formatRelative, TRANSPORT_META, getBestEquivalent, getEcoLevel } from '@/lib/utils'
+import { getTrips, getUserBadges, syncStreak } from '@/lib/supabase'
+import { formatCO2, formatDistance, formatRelative, TRANSPORT_META, getBestEquivalent, getEcoLevel, getStreakStatus } from '@/lib/utils'
 import type { Trip, UserBadge } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -63,7 +63,8 @@ const QUICK_LINKS = [
 ]
 
 export default function Dashboard() {
-  const { profile, user } = useAuth()
+  const { profile, user, refreshProfile } = useAuth()
+  const userId = user?.id
   const [trips, setTrips] = useState<Trip[]>([])
   const [badges, setBadges] = useState<UserBadge[]>([])
   const [loading, setLoading] = useState(true)
@@ -81,13 +82,26 @@ export default function Dashboard() {
 
   useEffect(() => { load() }, [load])
 
+  // Recompute the streak from the real trips (carpool/scheduled ones included) and heal a
+  // stale stored value. Runs once per login; refreshProfile is only called when it changed.
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    syncStreak(userId)
+      .then(r => { if (!cancelled && r.changed) refreshProfile() })
+      .catch(() => { /* cosmetic */ })
+    return () => { cancelled = true }
+  }, [userId, refreshProfile])
+
   const today = new Date().toISOString().split('T')[0]
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString()
   const co2Today = trips.filter(t => t.recorded_at.startsWith(today)).reduce((s, t) => s + Number(t.co2_saved_kg), 0)
   const co2Week = trips.filter(t => t.recorded_at >= weekAgo).reduce((s, t) => s + Number(t.co2_saved_kg), 0)
 
-  // Streak warning: streak active but no activity today
-  const showStreakWarning = !loading && profile && (profile.streak_days ?? 0) > 0 && (profile.last_activity_date ?? '') !== today
+  // Streak: the stored counter never expires by itself, so judge it by the last activity date.
+  // The warning only shows when the streak is really still alive (last trip was yesterday).
+  const streak = getStreakStatus(profile)
+  const showStreakWarning = !loading && streak.status === 'at_risk'
 
   // CO₂ equivalents banner
   const totalCO2 = Number(profile?.total_co2_saved ?? 0)
@@ -105,7 +119,7 @@ export default function Dashboard() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-amber-800">
-              Streak a rischio! {profile.streak_days} giorni
+              Streak a rischio! {streak.days} {streak.days === 1 ? 'giorno' : 'giorni'}
             </p>
             <p className="text-xs text-amber-600">Registra un viaggio oggi per non interrompere la serie</p>
           </div>
@@ -132,10 +146,10 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {profile && (profile.streak_days ?? 0) > 0 && (
+          {streak.days > 0 && (
             <Badge variant="secondary" className="gap-1">
               <Flame className="w-3 h-3 text-orange-500" />
-              {profile.streak_days}gg
+              {streak.days}gg
             </Badge>
           )}
           <Badge className="gap-1">
@@ -216,7 +230,7 @@ export default function Dashboard() {
             <StatCard label="CO₂ oggi" value={formatCO2(co2Today)} sub="risparmiata" icon={Leaf} color="bg-eco-green-light text-eco-green" />
             <StatCard label="CO₂ settimana" value={formatCO2(co2Week)} sub="ultimi 7 giorni" icon={TrendingUp} color="bg-blue-50 text-blue-600" />
             <StatCard label="CO₂ totale" value={formatCO2(totalCO2)} sub="dal primo giorno" icon={Award} color="bg-amber-50 text-amber-600" />
-            <StatCard label="Streak" value={`${profile?.streak_days ?? 0} gg`} sub="giorni consecutivi" icon={Flame} color="bg-orange-50 text-orange-500" />
+            <StatCard label="Streak" value={`${streak.days} gg`} sub="giorni consecutivi" icon={Flame} color="bg-orange-50 text-orange-500" />
           </>
         )}
       </div>

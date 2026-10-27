@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { insertTrip, incrementProfileStats } from '@/lib/supabase'
 import {
   calcCO2Saved, calcEcoPoints, TRANSPORT_META, getBestEquivalent,
-  suggestModes, formatDistance,
+  suggestModes, formatDistance, maxTripKm,
 } from '@/lib/utils'
 import type { TransportMode, GeoLocation } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -270,6 +270,12 @@ export default function TripNew() {
     const finalKm = parseFloat(distanceKm.replace(',', '.')) || 0
     if (!isSmartWorking) {
       if (finalKm <= 0) { setError('Inserisci una distanza valida'); return }
+      // Plausibility cap: without it a typo (or a joke) like 238623 km gave millions of points
+      const maxKm = maxTripKm([mode, ...segments.map(s => s.mode)])
+      if (finalKm > maxKm) {
+        setError(`Distanza troppo alta: per questo viaggio il massimo è ${maxKm.toLocaleString('it-IT')} km. Controlla il valore inserito.`)
+        return
+      }
     }
     if (isScheduled && !scheduledFor) { setError('Scegli la data del viaggio programmato'); return }
     setLoading(true); setError('')

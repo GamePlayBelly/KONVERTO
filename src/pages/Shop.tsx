@@ -15,6 +15,7 @@ import {
   redeemClubPrize, getUserClubPrizeRedemptions, getUserAdminClubs,
 } from '@/lib/supabase'
 import type { ClubPrize } from '@/lib/supabase'
+import { getStreakStatus } from '@/lib/utils'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -688,7 +689,7 @@ function BadgesTab({ tripCount, totalKm, carpoolCount }: { tripCount: number; to
       case 'trips':   return tripCount
       case 'km':      return totalKm
       case 'co2':     return Number(profile.total_co2_saved ?? 0)
-      case 'streak':  return (profile as unknown as Record<string, unknown>).streak_days as number ?? 0
+      case 'streak':  return getStreakStatus(profile).days
       case 'points':  return profile.eco_score ?? 0
       case 'carpool': return carpoolCount
     }

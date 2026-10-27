@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import type { Profile, Trip, Badge, UserBadge, LeaderboardEntry, Challenge, ChallengeMetric, AppNotification, ClubJoinRequest } from '@/types'
+import { toLocalDateStr, computeStreak } from '@/lib/utils'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
@@ -169,6 +170,7 @@ export async function processScheduledTrips(userId: string): Promise<void> {
   // Column missing (patch not applied yet) → nothing to do
   if (error) return
 
+  let credited = 0
   for (const t of due ?? []) {
     // Flag first (guarded by is_scheduled=true) to avoid double-crediting
     const { data: marked, error: markErr } = await supabase
@@ -178,7 +180,12 @@ export async function processScheduledTrips(userId: string): Promise<void> {
       .eq('is_scheduled', true)
       .select('id')
     if (markErr || !marked?.length) continue
-    await incrementProfileStats(userId, Number(t.eco_points) || 0, Number(t.co2_saved_kg) || 0)
+    await incrementProfileStats(userId, Number(t.eco_points) || 0, Number(t.co2_saved_kg) || 0, { skipStreak: true })
+    credited++
+  }
+  // One streak recompute for the whole batch (credited trips now count as activity days)
+  if (credited > 0) {
+    try { await syncStreak(userId) } catch { /* cosmetic: never fail the credit */ }
   }
 }
 
@@ -234,25 +241,37 @@ export async function getAllTimeLeaderboard(): Promise<
 export async function getMonthlyLeaderboard(periodStart: string): Promise<
   { user_id: string; total_points: number; total_co2_saved: number; profile: Pick<Profile, 'username' | 'full_name' | 'avatar_url' | 'city'> }[]
 > {
-  // Fetch trips in period (for ranking by activity) + ALL profiles (for display scores)
-  const [tripsResult, profilesResult] = await Promise.all([
-    supabase
-      .from('trips')
-      .select('user_id, eco_points, co2_saved_kg')
-      .gte('recorded_at', periodStart),
+  // Period totals come from a SECURITY DEFINER function: RLS on `trips` only lets each user
+  // read their OWN rows, so summing trips in the browser counted only the logged-in user's
+  // points and showed everybody else at 0. (Patch: supabase_patch_leaderboard.sql)
+  const [rpcResult, profilesResult] = await Promise.all([
+    supabase.rpc('get_period_leaderboard', { p_start: periodStart }),
     supabase
       .from('profiles')
       .select('id, eco_score, total_co2_saved, username, full_name, avatar_url, city')
       .limit(200),
   ])
 
-  // Aggregate trips this period — used only for SORTING (most active this period first)
   const periodActivity: Record<string, { pts: number; co2: number }> = {}
-  for (const t of tripsResult.data ?? []) {
-    const uid = t.user_id as string
-    if (!periodActivity[uid]) periodActivity[uid] = { pts: 0, co2: 0 }
-    periodActivity[uid].pts += (t.eco_points as number) ?? 0
-    periodActivity[uid].co2 += Number(t.co2_saved_kg) ?? 0
+  if (!rpcResult.error) {
+    for (const r of (rpcResult.data ?? []) as { user_id: string; period_points: number | string; period_co2: number | string }[]) {
+      periodActivity[r.user_id] = { pts: Number(r.period_points) || 0, co2: Number(r.period_co2) || 0 }
+    }
+  } else {
+    // Function not deployed yet (patch SQL not applied): fall back to what RLS allows —
+    // the current user's own trips — so the page still renders.
+    console.warn('[leaderboard] get_period_leaderboard unavailable, showing own points only:', rpcResult.error.message)
+    const { data } = await supabase
+      .from('trips')
+      .select('user_id, eco_points, co2_saved_kg')
+      .gte('recorded_at', periodStart)
+      .lte('recorded_at', new Date().toISOString())
+    for (const t of data ?? []) {
+      const uid = t.user_id as string
+      if (!periodActivity[uid]) periodActivity[uid] = { pts: 0, co2: 0 }
+      periodActivity[uid].pts += Number(t.eco_points) || 0
+      periodActivity[uid].co2 += Number(t.co2_saved_kg) || 0
+    }
   }
 
   // Build a quick map of eco_score for tie-break without refetching
@@ -1075,30 +1094,66 @@ export async function getUserPendingRequests(userId: string): Promise<string[]> 
   return (data ?? []).map((r: { club_id: string }) => r.club_id)
 }
 
-// Increments eco_score and total_co2_saved on the profile after a new trip
+/** Recomputes the streak from the user's REAL trips and stores it on the profile.
+ *  The old counter was bumped only when a trip was typed in by hand: carpool and
+ *  scheduled trips never counted, it used the UTC date, and an expired streak was
+ *  never reset (so it showed "1" forever). Deriving it from the trips fixes all of that
+ *  and heals stale values. Writes only when something changed. */
+export async function syncStreak(userId: string): Promise<{ streak: number; lastDay: string | null; changed: boolean }> {
+  const since = new Date(Date.now() - 400 * 86_400_000).toISOString()
+  type Row = { recorded_at: string; is_scheduled?: boolean | null }
+  let rows: Row[] | null = null
+
+  const full = await supabase
+    .from('trips')
+    .select('recorded_at, is_scheduled')
+    .eq('user_id', userId)
+    .gte('recorded_at', since)
+    .order('recorded_at', { ascending: false })
+    .limit(5000)
+  if (!full.error) {
+    rows = (full.data ?? []) as Row[]
+  } else {
+    // is_scheduled missing (patch not applied): every trip counts as credited
+    const legacy = await supabase
+      .from('trips')
+      .select('recorded_at')
+      .eq('user_id', userId)
+      .gte('recorded_at', since)
+      .order('recorded_at', { ascending: false })
+      .limit(5000)
+    if (!legacy.error) rows = (legacy.data ?? []) as Row[]
+  }
+  // Could not read the trips → never overwrite the stored streak with a guess
+  if (!rows) return { streak: 0, lastDay: null, changed: false }
+
+  const days = new Set<string>()
+  for (const t of rows) {
+    if (!t.is_scheduled) days.add(toLocalDateStr(new Date(t.recorded_at)))
+  }
+  const { streak, lastDay } = computeStreak(days)
+
+  const profile = await getProfile(userId)
+  if (!profile) return { streak, lastDay, changed: false }
+  const changed = (profile.streak_days ?? 0) !== streak || (profile.last_activity_date ?? null) !== lastDay
+  if (!changed) return { streak, lastDay, changed: false }
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({ streak_days: streak, last_activity_date: lastDay })
+    .eq('id', userId)
+  return { streak, lastDay, changed: !error }
+}
+
+// Increments eco_score and total_co2_saved on the profile after a new trip,
+// then refreshes the streak (skipStreak: caller will sync once for a whole batch)
 export async function incrementProfileStats(
   userId: string,
   ecoPoints: number,
-  co2Saved: number
+  co2Saved: number,
+  opts: { skipStreak?: boolean } = {}
 ): Promise<void> {
-  // Always fetch profile first so we can compute streak
-  const profile = await getProfile(userId)
-  if (!profile) return
-
-  const today     = new Date().toISOString().split('T')[0]
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().split('T')[0]
-  const lastDate  = (profile as unknown as Record<string, unknown>).last_activity_date as string | null ?? null
-
-  let newStreak = (profile as unknown as Record<string, unknown>).streak_days as number ?? 0
-  if (lastDate === today) {
-    // Already logged today — streak unchanged
-  } else if (lastDate === yesterday) {
-    newStreak = newStreak + 1          // consecutive day → extend
-  } else {
-    newStreak = 1                      // gap → reset to 1
-  }
-
-  // Try the RPC for points/co2 (atomic increment)
+  // Atomic increment via RPC
   const { error } = await supabase.rpc('increment_profile_stats', {
     p_user_id: userId,
     p_points: ecoPoints,
@@ -1106,21 +1161,18 @@ export async function incrementProfileStats(
   })
 
   if (error) {
-    // RPC unavailable — update everything manually
+    // RPC unavailable — update manually
+    const profile = await getProfile(userId)
+    if (!profile) return
     await supabase.from('profiles').update({
-      eco_score:          (profile.eco_score ?? 0) + ecoPoints,
-      total_co2_saved:    Number(profile.total_co2_saved ?? 0) + co2Saved,
-      streak_days:        newStreak,
-      last_activity_date: today,
-      updated_at:         new Date().toISOString(),
+      eco_score:       (profile.eco_score ?? 0) + ecoPoints,
+      total_co2_saved: Number(profile.total_co2_saved ?? 0) + co2Saved,
+      updated_at:      new Date().toISOString(),
     }).eq('id', userId)
-  } else {
-    // RPC handled points/co2 — patch streak separately
-    await supabase.from('profiles').update({
-      streak_days:        newStreak,
-      last_activity_date: today,
-      updated_at:         new Date().toISOString(),
-    }).eq('id', userId)
+  }
+
+  if (!opts.skipStreak) {
+    try { await syncStreak(userId) } catch { /* cosmetic: never fail a trip because of the streak */ }
   }
 }
 

@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   supabase, getFriendStatus, sendFriendRequest, createOrGetPrivateConversation,
 } from '@/lib/supabase'
+import { getStreakStatus } from '@/lib/utils'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -49,6 +50,7 @@ interface PublicProfileData {
   eco_score: number
   total_co2_saved: number | null
   streak_days: number | null
+  last_activity_date: string | null
   active_title: string | null
 }
 
@@ -182,7 +184,7 @@ export default function PublicProfile() {
       case 'trips':  return stats.tripCount
       case 'km':     return stats.totalKm
       case 'co2':    return Number(profile.total_co2_saved ?? stats.totalCo2)
-      case 'streak': return profile.streak_days ?? 0
+      case 'streak': return getStreakStatus(profile).days
       case 'points': return profile.eco_score ?? 0
     }
   }
@@ -265,10 +267,10 @@ export default function PublicProfile() {
                   <p className="text-lg font-bold text-amber-500">{unlockedBadges.length}</p>
                   <p className="text-xs text-gray-400">Badge</p>
                 </div>
-                {(profile.streak_days ?? 0) > 0 && (
+                {getStreakStatus(profile).days > 0 && (
                   <div className="text-center">
                     <p className="text-lg font-bold text-orange-500 flex items-center gap-1 justify-center">
-                      <Flame className="w-4 h-4" />{profile.streak_days}
+                      <Flame className="w-4 h-4" />{getStreakStatus(profile).days}
                     </p>
                     <p className="text-xs text-gray-400">Streak</p>
                   </div>
@@ -331,7 +333,7 @@ export default function PublicProfile() {
           { Icon: Route,  color: 'text-indigo-500',  bg: 'bg-indigo-50',  label: 'Viaggi',          value: stats.tripCount.toLocaleString() },
           { Icon: Bike,   color: 'text-blue-500',    bg: 'bg-blue-50',    label: 'Km totali',        value: `${stats.totalKm.toFixed(1)} km` },
           { Icon: Leaf,   color: 'text-green-500',   bg: 'bg-green-50',   label: 'CO₂ risparmiata',  value: `${(Number(profile.total_co2_saved ?? stats.totalCo2)).toFixed(1)} kg` },
-          { Icon: Flame,  color: 'text-orange-500',  bg: 'bg-orange-50',  label: 'Streak',           value: `${profile.streak_days ?? 0} gg` },
+          { Icon: Flame,  color: 'text-orange-500',  bg: 'bg-orange-50',  label: 'Streak',           value: `${getStreakStatus(profile).days} gg` },
         ] as const).map(({ Icon, color, bg, label, value }) => (
           <Card key={label}>
             <CardContent className="p-4 text-center">

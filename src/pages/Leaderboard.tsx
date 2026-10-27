@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { getMonthlyLeaderboard, getAllTimeLeaderboard, createChallenge, sendFriendRequest, awardPeriodBonuses } from '@/lib/supabase'
-import { formatCO2, formatPoints, getEcoLevel } from '@/lib/utils'
+import { formatCO2, formatPoints, getEcoLevel, getStreakStatus } from '@/lib/utils'
 import type { ChallengeMetric } from '@/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -794,10 +794,10 @@ export default function Leaderboard() {
               </button>
               {user && profile && (
                 <div className="flex items-center gap-2 bg-white/15 rounded-2xl px-3 py-2">
-                  {(profile.streak_days ?? 0) > 0 && (
+                  {getStreakStatus(profile).days > 0 && (
                     <div className="flex items-center gap-1">
                       <Flame className="w-3.5 h-3.5 text-orange-300" />
-                      <span className="text-xs font-bold text-white">{profile.streak_days}gg</span>
+                      <span className="text-xs font-bold text-white">{getStreakStatus(profile).days}gg</span>
                     </div>
                   )}
                   <div className="w-px h-4 bg-white/30" />

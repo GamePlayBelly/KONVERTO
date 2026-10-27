@@ -27,6 +27,7 @@ function nowLocal(iso?: string) {
 
 export default function TripHistory() {
   const { user, refreshProfile } = useAuth()
+  const userId = user?.id
   const [trips, setTrips] = useState<Trip[]>([])
   const [loading, setLoading] = useState(true)
   const [filterMode, setFilterMode] = useState<TransportMode | 'all'>('all')
@@ -43,15 +44,15 @@ export default function TripHistory() {
   const now = new Date().toISOString()
 
   const load = useCallback(async () => {
-    if (!user) return
+    if (!userId) return
     setLoading(true)
     // Credit any scheduled trip whose date has passed, then load the list
-    await processScheduledTrips(user.id)
-    const data = await getTrips(user.id, 300)
+    await processScheduledTrips(userId)
+    const data = await getTrips(userId, 300)
     setTrips(data)
     setLoading(false)
     refreshProfile()
-  }, [user, refreshProfile])
+  }, [userId, refreshProfile])
 
   useEffect(() => { load() }, [load])
 

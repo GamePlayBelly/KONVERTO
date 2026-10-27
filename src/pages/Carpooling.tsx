@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Car, Plus, MapPin, Clock, Users, Leaf, Search, Calendar, Navigation, Trash2, Ruler } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase, processExpiredCarpoolRides } from '@/lib/supabase'
+import { MAX_TRIP_KM } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -133,8 +134,12 @@ export default function Carpooling() {
     }
   }
 
+  // The distance decides the points every passenger and the driver receive, so it must be sane
+  const rideKm = form.distance_km ? parseFloat(form.distance_km) : null
+  const distanceInvalid = rideKm !== null && (Number.isNaN(rideKm) || rideKm < 0 || rideKm > MAX_TRIP_KM.carpooling)
+
   const handleCreate = async () => {
-    if (!user || !form.origin_label || !form.destination_label || !form.departure_time) return
+    if (!user || !form.origin_label || !form.destination_label || !form.departure_time || distanceInvalid) return
     setCreating(true)
     try {
       await supabase.from('carpooling_rides').insert({
@@ -212,7 +217,8 @@ export default function Carpooling() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Distanza km (opz.)</Label>
-                <Input type="number" placeholder="Es. 120" value={form.distance_km} onChange={e => setForm(p => ({...p, distance_km: e.target.value}))} />
+                <Input type="number" min="0" max={MAX_TRIP_KM.carpooling} placeholder="Es. 120" value={form.distance_km} onChange={e => setForm(p => ({...p, distance_km: e.target.value}))} />
+                {distanceInvalid && <p className="text-xs text-red-500">Distanza non valida (max {MAX_TRIP_KM.carpooling} km)</p>}
               </div>
               <div className="space-y-1.5">
                 <Label>Prezzo/posto (€)</Label>
@@ -221,7 +227,7 @@ export default function Carpooling() {
             </div>
             <Input placeholder="Note opzionali..." value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))} />
             <div className="flex gap-2">
-              <Button onClick={handleCreate} disabled={creating || !form.origin_label || !form.destination_label || !form.departure_time} className="flex-1">
+              <Button onClick={handleCreate} disabled={creating || distanceInvalid || !form.origin_label || !form.destination_label || !form.departure_time} className="flex-1">
                 {creating ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Pubblica passaggio'}
               </Button>
               <Button variant="outline" onClick={() => setShowCreate(false)}>Annulla</Button>
