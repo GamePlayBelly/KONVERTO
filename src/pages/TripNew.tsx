@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { insertTrip, incrementProfileStats, supabase } from '@/lib/supabase'
 import {
   calcCO2Saved, calcEcoPoints, TRANSPORT_META, getBestEquivalent,
-  suggestModes, formatDistance, maxTripKm,
+  suggestModes, formatDistance, maxTripKm, MAX_TRIP_KM,
 } from '@/lib/utils'
 import type { TransportMode, GeoLocation } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -263,6 +263,17 @@ export default function TripNew() {
   const co2 = calcCO2Saved(mode, km)
   const pts = calcEcoPoints(co2, km)
   const equiv = km > 0 ? getBestEquivalent(co2) : null
+
+  // Modes that cannot cover this distance (e.g. on foot / e-scooter over 100 km) are not selectable
+  const isTooFar = (m: TransportMode) => km > MAX_TRIP_KM[m]
+
+  // If the distance grows past what the chosen mode can do, move to the first mode that can
+  // (not while GPS is recording: the mode must not change under the user's feet)
+  useEffect(() => {
+    if (gpsActive || km <= MAX_TRIP_KM[mode]) return
+    const next = [...suggestions, ...ALL_MODES].find(m => km <= MAX_TRIP_KM[m])
+    if (next) setMode(next)
+  }, [km, mode, gpsActive, suggestions])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -581,19 +592,23 @@ export default function TripNew() {
                 const meta = TRANSPORT_META[m]
                 const active = mode === m
                 const isSuggested = suggestions.includes(m)
+                const tooFar = isTooFar(m)
                 return (
                   <button
                     key={m}
                     type="button"
+                    disabled={tooFar}
                     onClick={() => setMode(m)}
                     className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-2xl border-2 transition-all duration-200 ${
-                      active
+                      tooFar
+                        ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed grayscale'
+                        : active
                         ? 'border-eco-green bg-eco-green-light shadow-sm scale-105'
                         : isSuggested
                           ? 'border-eco-green/30 bg-eco-green-light/40 hover:border-eco-green/60'
                           : 'border-gray-100 bg-white hover:border-gray-200 hover:bg-gray-50'
                     }`}
-                    title={`${meta.label} — ${meta.co2Label}`}
+                    title={tooFar ? `${meta.label} — non selezionabile oltre ${MAX_TRIP_KM[m]} km` : `${meta.label} — ${meta.co2Label}`}
                   >
                     {isSuggested && !active && (
                       <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-eco-green rounded-full border-2 border-white" />
