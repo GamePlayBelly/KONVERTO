@@ -351,7 +351,7 @@ export default function Profile() {
                   Trasporto preferito: {TRANSPORT_META[profile.preferred_transport].emoji} {TRANSPORT_META[profile.preferred_transport].label}
                 </p>
               )}
-              <div className="flex gap-4 mt-3">
+              <div className="flex flex-wrap gap-x-4 gap-y-2 mt-3">
                 <div className="text-center">
                   <p className="text-lg font-bold text-eco-green">{(profile?.eco_score ?? 0).toLocaleString()}</p>
                   <p className="text-xs text-gray-400">Punti</p>
@@ -442,19 +442,19 @@ export default function Profile() {
               Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-2xl" />)
             ) : (
               <>
-                <Card><CardContent className="p-4 text-center">
+                <Card><CardContent className="p-3 sm:p-4 text-center">
                   <Leaf className="w-5 h-5 text-eco-green mx-auto mb-1" />
-                  <p className="text-base font-bold text-gray-900">{formatCO2(totalCO2)}</p>
+                  <p className="text-sm sm:text-base font-bold text-gray-900 whitespace-nowrap">{formatCO2(totalCO2)}</p>
                   <p className="text-xs text-gray-400">CO₂ risparmiata</p>
                 </CardContent></Card>
-                <Card><CardContent className="p-4 text-center">
+                <Card><CardContent className="p-3 sm:p-4 text-center">
                   <Route className="w-5 h-5 text-blue-500 mx-auto mb-1" />
-                  <p className="text-base font-bold text-gray-900">{formatDistance(totalKm)}</p>
+                  <p className="text-sm sm:text-base font-bold text-gray-900 whitespace-nowrap">{formatDistance(totalKm)}</p>
                   <p className="text-xs text-gray-400">Km percorsi</p>
                 </CardContent></Card>
-                <Card><CardContent className="p-4 text-center">
+                <Card><CardContent className="p-3 sm:p-4 text-center">
                   <TrendingUp className="w-5 h-5 text-amber-500 mx-auto mb-1" />
-                  <p className="text-base font-bold text-gray-900">{ownStreak.days} gg</p>
+                  <p className="text-sm sm:text-base font-bold text-gray-900 whitespace-nowrap">{ownStreak.days} gg</p>
                   <p className="text-xs text-gray-400">Streak</p>
                 </CardContent></Card>
               </>

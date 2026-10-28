@@ -188,7 +188,7 @@ export default function Carpooling() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 pb-24 lg:pb-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Car className="w-7 h-7 text-eco-green" /> Carpooling
@@ -288,11 +288,11 @@ export default function Carpooling() {
                               <Leaf className="w-2.5 h-2.5" /> {ride.driver?.eco_score ?? 0} pts
                             </Badge>
                           </div>
-                          <div className="flex items-center gap-2 text-sm text-gray-700 mb-2">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-700 mb-2">
                             <MapPin className="w-4 h-4 text-eco-green flex-shrink-0" />
-                            <span className="font-medium truncate">{ride.origin_label}</span>
+                            <span className="font-medium break-words min-w-0">{ride.origin_label}</span>
                             <Navigation className="w-3 h-3 text-gray-400 flex-shrink-0" />
-                            <span className="font-medium truncate">{ride.destination_label}</span>
+                            <span className="font-medium break-words min-w-0">{ride.destination_label}</span>
                           </div>
                           <div className="flex items-center gap-4 text-xs text-gray-400 flex-wrap">
                             <span className="flex items-center gap-1">

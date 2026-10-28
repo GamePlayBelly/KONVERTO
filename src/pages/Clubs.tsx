@@ -134,7 +134,7 @@ export default function Clubs() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 pb-24 lg:pb-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Building2 className="w-7 h-7 text-eco-green" /> Club Aziendali
@@ -315,10 +315,10 @@ function ClubCard({ club, isMember, isAdmin, isPending, onJoin, joining, onClick
             {club.is_public ? <Globe className="w-3 h-3 text-gray-400" /> : <Lock className="w-3 h-3 text-gray-400" />}
           </div>
           {club.company && <p className="text-xs text-gray-500">{club.company}</p>}
-          <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
-            <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {club.member_count} membri</span>
-            <span className="flex items-center gap-1"><Leaf className="w-3 h-3 text-eco-green" /> {club.eco_score_total} pts</span>
-            {club.city && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {club.city}</span>}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-400">
+            <span className="flex items-center gap-1 whitespace-nowrap"><Users className="w-3 h-3" /> {club.member_count} membri</span>
+            <span className="flex items-center gap-1 whitespace-nowrap"><Leaf className="w-3 h-3 text-eco-green" /> {club.eco_score_total} pts</span>
+            {club.city && <span className="flex items-center gap-1 whitespace-nowrap"><MapPin className="w-3 h-3" /> {club.city}</span>}
           </div>
         </div>
         <Button

@@ -173,7 +173,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Main content */}
-      <main className="flex-1 lg:ml-64 pt-16 lg:pt-0">
+      <main className="flex-1 min-w-0 lg:ml-64 pt-16 lg:pt-0">
         <div className="p-4 pb-8 lg:p-8 max-w-6xl mx-auto">{children}</div>
       </main>
     </div>

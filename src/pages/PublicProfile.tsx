@@ -256,7 +256,7 @@ export default function PublicProfile() {
               )}
 
               {/* Eco score + badge count */}
-              <div className="flex gap-4 mt-3">
+              <div className="flex flex-wrap gap-x-4 gap-y-2 mt-3">
                 <div className="text-center">
                   <p className="text-lg font-bold text-eco-green flex items-center gap-1 justify-center">
                     <Zap className="w-4 h-4" />{(profile.eco_score ?? 0).toLocaleString()}

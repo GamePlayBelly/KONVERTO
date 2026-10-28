@@ -25,7 +25,7 @@ function StatCard({ label, value, sub, icon: Icon, color }: {
         <div className="flex items-start justify-between">
           <div>
             <p className="text-sm text-gray-500 font-medium">{label}</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
+            <p className="text-xl sm:text-2xl font-bold text-gray-900 mt-1 whitespace-nowrap">{value}</p>
             {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
           </div>
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color}`}>
@@ -130,8 +130,8 @@ export default function Dashboard() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <Avatar className="w-12 h-12 border-2 border-eco-green/20">
             {profile?.avatar_url && <AvatarImage src={profile.avatar_url} />}
             <AvatarFallback className="text-base">{initials}</AvatarFallback>

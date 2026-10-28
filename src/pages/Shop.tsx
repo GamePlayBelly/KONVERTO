@@ -590,16 +590,16 @@ function ClubPrizesTab({ userId, userPoints, onPointsChanged }: {
 
       {/* Club header */}
       {currentClubInfo && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <Avatar className="w-10 h-10">
               {currentClubInfo.club.avatar_url && <AvatarImage src={currentClubInfo.club.avatar_url} />}
               <AvatarFallback className="bg-eco-green-light text-eco-teal font-bold text-xs">
                 {currentClubInfo.club.name.slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            <div>
-              <p className="font-bold text-gray-900 text-sm">{currentClubInfo.club.name}</p>
+            <div className="min-w-0">
+              <p className="font-bold text-gray-900 text-sm truncate">{currentClubInfo.club.name}</p>
               <p className="text-xs text-gray-400 flex items-center gap-1">
                 {isAdmin
                   ? <><Crown className="w-3 h-3 text-amber-500" /> Admin del club</>

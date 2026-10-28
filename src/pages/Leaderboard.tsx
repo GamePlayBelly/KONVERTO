@@ -321,11 +321,11 @@ function RankedRow({ entry, rank, isMe, leaderPts, prevPts, onChallenge, onFrien
         className={`absolute left-0 top-0 bottom-0 ${isMe ? 'bg-eco-green/8' : 'bg-gray-50'} transition-all duration-700 rounded-2xl`}
         style={{ width: `${pct}%` }}
       />
-      <div className="relative flex items-center gap-3 px-4 py-3">
-        <span className="w-7 text-center text-sm font-black text-gray-400 flex-shrink-0">#{rank}</span>
+      <div className="relative flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3">
+        <span className="w-6 sm:w-7 text-center text-sm font-black text-gray-400 flex-shrink-0">#{rank}</span>
 
         <Avatar
-          className={`w-9 h-9 flex-shrink-0 ${!isMe ? 'cursor-pointer hover:opacity-80' : ''}`}
+          className={`w-8 h-8 sm:w-9 sm:h-9 flex-shrink-0 ${!isMe ? 'cursor-pointer hover:opacity-80' : ''}`}
           onClick={!isMe ? () => navigate(`/user/${entry.user_id}`) : undefined}
         >
           {entry.profile.avatar_url && <AvatarImage src={entry.profile.avatar_url} />}
@@ -343,18 +343,18 @@ function RankedRow({ entry, rank, isMe, leaderPts, prevPts, onChallenge, onFrien
               {entry.profile.full_name ?? entry.profile.username}
             </p>
             {isMe && <span className="text-[9px] bg-eco-green text-white font-bold px-1.5 py-0.5 rounded-full">TU</span>}
-            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${lvl.bg} ${lvl.color}`}>
+            <span className={`hidden sm:inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${lvl.bg} ${lvl.color}`}>
               {lvl.name}
             </span>
           </div>
           <div className="flex items-center gap-2 mt-0.5">
             {entry.profile.city && (
-              <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
+              <span className="text-[10px] text-gray-400 flex items-center gap-0.5 whitespace-nowrap">
                 <MapPin className="w-2.5 h-2.5" /> {entry.profile.city}
               </span>
             )}
             {(entry.total_co2_saved ?? 0) > 0 && (
-              <span className="text-[10px] text-eco-green flex items-center gap-0.5 font-medium">
+              <span className="text-[10px] text-eco-green flex items-center gap-0.5 font-medium whitespace-nowrap">
                 <Leaf className="w-2.5 h-2.5" /> {formatCO2(entry.total_co2_saved!)}
               </span>
             )}
@@ -810,7 +810,7 @@ export default function Leaderboard() {
         <div className="absolute -bottom-6 -left-6 w-28 h-28 bg-white/5 rounded-full" />
 
         <div className="relative p-5 pb-4">
-          <div className="flex items-start justify-between mb-4">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Trophy className="w-5 h-5 text-amber-300" />

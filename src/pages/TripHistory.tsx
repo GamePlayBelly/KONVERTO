@@ -233,16 +233,16 @@ export default function TripHistory() {
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">
-        <Card><CardContent className="p-4 text-center">
-          <p className="text-lg font-bold text-eco-green">{formatCO2(totalCO2)}</p>
+        <Card><CardContent className="p-3 sm:p-4 text-center">
+          <p className="text-base sm:text-lg font-bold text-eco-green whitespace-nowrap">{formatCO2(totalCO2)}</p>
           <p className="text-xs text-gray-400">CO₂ risparmiata</p>
         </CardContent></Card>
-        <Card><CardContent className="p-4 text-center">
-          <p className="text-lg font-bold text-eco-green">{formatDistance(totalKm)}</p>
+        <Card><CardContent className="p-3 sm:p-4 text-center">
+          <p className="text-base sm:text-lg font-bold text-eco-green whitespace-nowrap">{formatDistance(totalKm)}</p>
           <p className="text-xs text-gray-400">Km percorsi</p>
         </CardContent></Card>
-        <Card><CardContent className="p-4 text-center">
-          <p className="text-lg font-bold text-eco-green">{totalPts}</p>
+        <Card><CardContent className="p-3 sm:p-4 text-center">
+          <p className="text-base sm:text-lg font-bold text-eco-green whitespace-nowrap">{totalPts}</p>
           <p className="text-xs text-gray-400">Punti guadagnati</p>
         </CardContent></Card>
       </div>
