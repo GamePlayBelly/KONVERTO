@@ -243,6 +243,12 @@ export default function ClubDetail() {
   const isAdmin = club?.created_by === user?.id
     || members.find(m => m.user_id === user?.id)?.role === 'admin'
 
+  // clubs.eco_score_total is never refreshed server-side: sum the members live,
+  // like the club list does.
+  const clubPoints = members.length > 0
+    ? members.reduce((sum, m) => sum + (m.profile?.eco_score ?? 0), 0)
+    : club?.eco_score_total ?? 0
+
   const handleSave = async () => {
     if (!id) return
     setSaving(true)
@@ -494,7 +500,7 @@ export default function ClubDetail() {
                   {club.description && <p className="text-sm text-gray-600 mt-1.5">{club.description}</p>}
                   <div className="flex gap-4 mt-3 text-xs text-gray-500 flex-wrap">
                     <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{club.member_count} membri</span>
-                    <span className="flex items-center gap-1"><Leaf className="w-3.5 h-3.5 text-eco-green" />{club.eco_score_total.toLocaleString()} pts</span>
+                    <span className="flex items-center gap-1"><Leaf className="w-3.5 h-3.5 text-eco-green" />{clubPoints.toLocaleString()} pts</span>
                     {club.city && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{club.city}</span>}
                     {club.company && <span className="flex items-center gap-1"><Building2 className="w-3.5 h-3.5" />{club.company}</span>}
                   </div>

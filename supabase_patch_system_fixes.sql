@@ -1204,6 +1204,12 @@ BEGIN
   IF to_regclass('public.club_prize_redemptions') IS NOT NULL THEN
     DROP POLICY IF EXISTS "redemptions_insert" ON public.club_prize_redemptions;
 
+    -- Su alcuni database la colonna status non esiste ancora: serve sia qui sotto
+    -- sia in redeem_club_prize().
+    ALTER TABLE public.club_prize_redemptions
+      ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'confirmed';
+    UPDATE public.club_prize_redemptions SET status = 'confirmed' WHERE status IS NULL;
+
     -- Normalizza eventuali doppi riscatti storici prima dell'indice unico.
     UPDATE public.club_prize_redemptions r
     SET status = 'cancelled'

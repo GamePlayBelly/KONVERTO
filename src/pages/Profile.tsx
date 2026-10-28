@@ -6,10 +6,11 @@ import {
   BarChart, Bar, Cell
 } from 'recharts'
 import { useAuth } from '@/contexts/AuthContext'
-import { getTrips, getAllBadges, getUserBadges, updateProfile, getChallenges, respondToChallenge, getUserPurchasedTitles, getFriends, createOrGetPrivateConversation, supabase } from '@/lib/supabase'
+import { getUnlockedBadges } from '@/lib/badges'
+import { getTrips, getAllBadges, updateProfile, getChallenges, respondToChallenge, getUserPurchasedTitles, getFriends, createOrGetPrivateConversation, supabase } from '@/lib/supabase'
 import { formatCO2, formatDistance, formatDate, getCO2Equivalents, TRANSPORT_META, getEcoLevel } from '@/lib/utils'
 import { useOwnStreak } from '@/hooks/useOwnStreak'
-import type { Trip, Badge as BadgeType, UserBadge, Challenge, TransportMode } from '@/types'
+import type { Trip, Badge as BadgeType, Challenge, TransportMode } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -134,7 +135,6 @@ export default function Profile() {
   const navigate = useNavigate()
   const [trips, setTrips] = useState<Trip[]>([])
   const [_allBadges, setAllBadges] = useState<BadgeType[]>([])
-  const [userBadges, setUserBadges] = useState<UserBadge[]>([])
   const [challenges, setChallenges] = useState<Challenge[]>([])
   const [unlockedTitles, setUnlockedTitles] = useState<{ id: string; name: string; description: string | null }[]>([])
   const [friends, setFriends] = useState<Friend[]>([])
@@ -167,17 +167,15 @@ export default function Profile() {
     if (!user) return
     setLoading(true)
     try {
-      const [t, ab, ub, ch, titles, fr] = await Promise.all([
+      const [t, ab, ch, titles, fr] = await Promise.all([
         getTrips(user.id, 200),
         getAllBadges(),
-        getUserBadges(user.id),
         getChallenges(user.id),
         getUserPurchasedTitles(user.id),
         getFriends(user.id),
       ])
       setTrips(t)
       setAllBadges(ab)
-      setUserBadges(ub)
       setChallenges(ch)
       setUnlockedTitles(titles)
       setFriends(fr)
@@ -260,6 +258,13 @@ export default function Profile() {
   const transportBreakdown = buildTransportBreakdown(trips)
   const totalKm = trips.filter(t => t.recorded_at <= new Date().toISOString()).reduce((s, t) => s + Number(t.distance_km), 0)
   const totalCO2 = Number(profile?.total_co2_saved ?? 0)
+  const unlockedBadgeCount = getUnlockedBadges({
+    trips:  trips.filter(t => t.recorded_at <= new Date().toISOString()).length,
+    km:     totalKm,
+    co2:    totalCO2,
+    streak: ownStreak.days,
+    points: profile?.eco_score ?? 0,
+  }).length
   const co2Eq = totalCO2 > 0 ? getCO2Equivalents(totalCO2) : null
   const initials = profile?.username?.slice(0, 2).toUpperCase() ?? 'EC'
 
@@ -361,7 +366,7 @@ export default function Profile() {
                   <p className="text-xs text-gray-400">Viaggi</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-lg font-bold text-eco-green">{userBadges.length}</p>
+                  <p className="text-lg font-bold text-eco-green">{unlockedBadgeCount}</p>
                   <p className="text-xs text-gray-400">Badge</p>
                 </div>
                 <div className="text-center">

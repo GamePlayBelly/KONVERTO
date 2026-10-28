@@ -2,13 +2,14 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   PlusCircle, Flame, Leaf, TrendingUp, MapPin, Award, Calendar, ArrowRight,
-  Car, MessageCircle, Building2, ShoppingBag, AlertTriangle, Hand, Route, Trophy
+  Car, MessageCircle, Building2, ShoppingBag, AlertTriangle, Hand, Route
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useOwnStreak } from '@/hooks/useOwnStreak'
-import { getTrips, getTripsSince, getUserBadges } from '@/lib/supabase'
+import { getTrips, getTripsSince } from '@/lib/supabase'
+import { getUnlockedBadges } from '@/lib/badges'
 import { formatCO2, formatDistance, formatRelative, TRANSPORT_META, getBestEquivalent, getEcoLevel } from '@/lib/utils'
-import type { Trip, UserBadge } from '@/types'
+import type { Trip } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -67,20 +68,21 @@ export default function Dashboard() {
   const { profile, user } = useAuth()
   const [trips, setTrips] = useState<Trip[]>([])
   const [weekTrips, setWeekTrips] = useState<Pick<Trip, 'recorded_at' | 'co2_saved_kg'>[]>([])
-  const [badges, setBadges] = useState<UserBadge[]>([])
+  const [badgeStats, setBadgeStats] = useState({ trips: 0, km: 0 })
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     if (!user) return
     try {
       const weekAgoISO = new Date(Date.now() - 7 * 86400000).toISOString()
-      const [t, b, w] = await Promise.all([
-        getTrips(user.id, 5),
-        getUserBadges(user.id),
+      const [t, w] = await Promise.all([
+        getTrips(user.id, 200),
         getTripsSince(user.id, weekAgoISO),
       ])
-      setTrips(t)
-      setBadges(b)
+      setTrips(t.slice(0, 5))
+      // Same basis as the Badge tab of Profile (last 200 trips, scheduled ones excluded)
+      const done = t.filter(x => x.recorded_at <= new Date().toISOString())
+      setBadgeStats({ trips: done.length, km: done.reduce((s, x) => s + Number(x.distance_km), 0) })
       setWeekTrips(w)
     } catch (err) {
       console.error('[Dashboard] load error:', err)
@@ -104,6 +106,14 @@ export default function Dashboard() {
   // CO₂ equivalents banner
   const totalCO2 = Number(profile?.total_co2_saved ?? 0)
   const equiv = totalCO2 > 0 ? getBestEquivalent(totalCO2) : null
+
+  const unlockedBadges = getUnlockedBadges({
+    trips:  badgeStats.trips,
+    km:     badgeStats.km,
+    co2:    totalCO2,
+    streak: streak.days,
+    points: profile?.eco_score ?? 0,
+  })
 
   const initials = profile?.username?.slice(0, 2).toUpperCase() ?? 'EC'
 
@@ -294,25 +304,22 @@ export default function Dashboard() {
               <div className="grid grid-cols-3 gap-2">
                 {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
               </div>
-            ) : badges.length === 0 ? (
+            ) : unlockedBadges.length === 0 ? (
               <div className="text-center py-6">
                 <Award className="w-8 h-8 text-gray-200 mx-auto mb-2" />
                 <p className="text-sm text-gray-400">Completa viaggi per sbloccare badge!</p>
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">
-                {badges.slice(0, 9).map(ub => (
+                {unlockedBadges.slice(0, 9).map(b => (
                   <div
-                    key={ub.id}
+                    key={b.id}
                     className="bg-eco-green-light rounded-xl p-2 flex flex-col items-center gap-1"
-                    title={ub.badge?.name}
+                    title={b.name}
                   >
-                    {ub.badge?.icon_name
-                      ? <span className="text-2xl">{ub.badge.icon_name}</span>
-                      : <Trophy className="w-6 h-6 text-amber-500" />
-                    }
+                    <span className="text-2xl">{b.emoji}</span>
                     <p className="text-[10px] font-medium text-eco-teal text-center leading-tight line-clamp-2">
-                      {ub.badge?.name}
+                      {b.name}
                     </p>
                   </div>
                 ))}
